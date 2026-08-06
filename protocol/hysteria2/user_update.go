@@ -1,13 +1,7 @@
 package hysteria2
 
 import (
-	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
-)
-
-var (
-	_ adapter.UpdatableInbound[option.Hysteria2User] = (*Inbound)(nil)
-	_ adapter.UserSessionCloser                      = (*Inbound)(nil)
 )
 
 // UpdateUsers atomically replaces the authentication table. The sing-quic

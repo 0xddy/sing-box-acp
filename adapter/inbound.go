@@ -17,27 +17,6 @@ type Inbound interface {
 	Tag() string
 }
 
-// UpdatableInbound marks protocol inbounds that can replace their user table
-// without recreating the listener.
-type UpdatableInbound[T any] interface {
-	Inbound
-	UpdateUsers(users []T) error
-}
-
-// UserSessionCloser marks protocol inbounds that can close an authenticated
-// transport session for one user without restarting the listener.
-type UserSessionCloser interface {
-	Inbound
-	CloseUserSessions(userID string) int
-}
-
-// UpdatableShadowsocksInbound mirrors UpdatableInbound for Shadowsocks because
-// the upstream SSM API already uses UpdateUsers([]string, []string).
-type UpdatableShadowsocksInbound interface {
-	Inbound
-	UpdateUsersByOptions(users []option.ShadowsocksUser) error
-}
-
 type TCPInjectableInbound interface {
 	Inbound
 	ConnectionHandlerEx

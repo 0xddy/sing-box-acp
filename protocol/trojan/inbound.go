@@ -2,8 +2,12 @@ package trojan
 
 import (
 	"context"
+	"crypto/sha256"
+	"io"
 	"net"
 	"os"
+	"sync"
+	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/inbound"
@@ -34,12 +38,124 @@ type Inbound struct {
 	router                   adapter.ConnectionRouterEx
 	logger                   log.ContextLogger
 	listener                 *listener.Listener
-	service                  *trojan.Service[int]
-	users                    []option.TrojanUser
+	auth                     atomic.Pointer[authenticator]
+	connections              connectionRegistry
+	fallbackHandler          N.TCPConnectionHandlerEx
 	tlsConfig                tls.ServerConfig
 	fallbackAddr             M.Socksaddr
 	fallbackAddrTLSNextProto map[string]M.Socksaddr
 	transport                adapter.V2RayServerTransport
+}
+
+// userIdentity is the identity carried on an authenticated connection. Index is
+// only a display fallback for unnamed users; Name and CredentialFingerprint are
+// what identify the user, so the identity survives a reordered user list and
+// changes as soon as the password is rotated. Carrying the name on the identity
+// also removes the need to index a shared user slice from the connection path.
+type userIdentity struct {
+	Index                 int
+	Name                  string
+	CredentialFingerprint [sha256.Size]byte
+}
+
+// credential is the order-independent part of an identity, used to decide
+// whether an authenticated connection is still authorized.
+type credential struct {
+	Name                  string
+	CredentialFingerprint [sha256.Size]byte
+}
+
+func (i userIdentity) credential() credential {
+	return credential{Name: i.Name, CredentialFingerprint: i.CredentialFingerprint}
+}
+
+// String keeps the identity printable for the sing formatter, which panics on
+// struct values it cannot stringify and is reached from transport error paths.
+func (i userIdentity) String() string {
+	if i.Name != "" {
+		return i.Name
+	}
+	return F.ToString(i.Index)
+}
+
+// authenticator binds an immutable authentication snapshot to the credential
+// set it authorizes so that both are replaced by a single atomic store.
+type authenticator struct {
+	service    *trojan.Service[userIdentity]
+	authorized map[credential]struct{}
+}
+
+func (a *authenticator) authorizes(identity userIdentity) bool {
+	_, authorized := a.authorized[identity.credential()]
+	return authorized
+}
+
+func userIdentities(users []option.TrojanUser) []userIdentity {
+	return common.MapIndexed(users, func(index int, user option.TrojanUser) userIdentity {
+		return userIdentity{
+			Index:                 index,
+			Name:                  user.Name,
+			CredentialFingerprint: sha256.Sum256([]byte(user.Password)),
+		}
+	})
+}
+
+// connectionRegistry covers the hand-off window: a connection is registered
+// once it is authenticated and unregistered once RouteConnectionEx returns.
+// Inside that window the router has already passed the connection to its
+// trackers (it does so before starting the forwarding goroutines), so an
+// external tracker owns every connection the registry drops. Nothing owns a
+// connection before that point, and the window is long enough to matter because
+// routing sniffs the stream first, waiting on payload the client decides when
+// to send.
+//
+// The registry deliberately does not follow a connection for its whole life:
+// once the router's trackers hold it, closing it twice from two places would
+// only duplicate machinery that already exists outside sing-box.
+type connectionRegistry struct {
+	access      sync.Mutex
+	connections map[*registeredConnection]struct{}
+}
+
+type registeredConnection struct {
+	credential credential
+	closer     io.Closer
+}
+
+func (r *connectionRegistry) add(identity userIdentity, closer io.Closer) *registeredConnection {
+	registered := &registeredConnection{credential: identity.credential(), closer: closer}
+	r.access.Lock()
+	defer r.access.Unlock()
+	if r.connections == nil {
+		r.connections = make(map[*registeredConnection]struct{})
+	}
+	r.connections[registered] = struct{}{}
+	return registered
+}
+
+func (r *connectionRegistry) remove(registered *registeredConnection) {
+	r.access.Lock()
+	defer r.access.Unlock()
+	delete(r.connections, registered)
+}
+
+// closeMatching closes every registered connection whose credential matches.
+// Closing happens outside the registry lock so a closer that unregisters
+// synchronously cannot deadlock.
+func (r *connectionRegistry) closeMatching(match func(credential) bool) int {
+	r.access.Lock()
+	revoked := make([]io.Closer, 0, len(r.connections))
+	for registered := range r.connections {
+		if match(registered.credential) {
+			revoked = append(revoked, registered.closer)
+			delete(r.connections, registered)
+		}
+	}
+	r.access.Unlock()
+	for _, closer := range revoked {
+		_ = closer.Close()
+	}
+	return len(revoked)
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.TrojanInboundOptions) (adapter.Inbound, error) {
@@ -47,7 +163,6 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		Adapter: inbound.NewAdapter(C.TypeTrojan, tag),
 		router:  router,
 		logger:  logger,
-		users:   options.Users,
 	}
 	if options.TLS != nil {
 		tlsConfig, err := tls.NewServerWithOptions(tls.ServerOptions{
@@ -86,15 +201,12 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}
 		fallbackHandler = adapter.NewUpstreamContextHandlerEx(inbound.fallbackConnection, nil)
 	}
-	service := trojan.NewService[int](adapter.NewUpstreamContextHandlerEx(inbound.newConnection, inbound.newPacketConnection), fallbackHandler, logger)
-	err := service.UpdateUsers(common.MapIndexed(options.Users, func(index int, it option.TrojanUser) int {
-		return index
-	}), common.Map(options.Users, func(it option.TrojanUser) string {
-		return it.Password
-	}))
+	inbound.fallbackHandler = fallbackHandler
+	initialAuth, err := inbound.authenticatorForUsers(options.Users)
 	if err != nil {
 		return nil, err
 	}
+	inbound.auth.Store(initialAuth)
 	if options.Transport != nil {
 		inbound.transport, err = v2ray.NewServerTransport(ctx, logger, common.PtrValueOrDefault(options.Transport), inbound.tlsConfig, (*inboundTransportHandler)(inbound))
 		if err != nil {
@@ -105,7 +217,6 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err != nil {
 		return nil, err
 	}
-	inbound.service = service
 	inbound.listener = listener.New(listener.Options{
 		Context:           ctx,
 		Logger:            logger,
@@ -174,24 +285,76 @@ func (h *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata a
 		}
 		conn = tlsConn
 	}
-	err := h.service.NewConnection(adapter.WithContext(ctx, &metadata), conn, metadata.Source, onClose)
+	current := h.auth.Load()
+	if current == nil {
+		N.CloseOnHandshakeFailure(conn, onClose, os.ErrClosed)
+		return
+	}
+	err := current.service.NewConnection(adapter.WithContext(ctx, &metadata), conn, metadata.Source, onClose)
 	if err != nil {
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		h.logger.ErrorContext(ctx, E.Cause(err, "process connection from ", metadata.Source))
 	}
 }
 
+// authenticatorForUsers builds a complete replacement snapshot before anything
+// is published, so a rejected user list leaves the running authentication table
+// untouched.
+func (h *Inbound) authenticatorForUsers(users []option.TrojanUser) (*authenticator, error) {
+	identities := userIdentities(users)
+	service := trojan.NewService[userIdentity](
+		adapter.NewUpstreamContextHandlerEx(h.newConnection, h.newPacketConnection),
+		h.fallbackHandler,
+		h.logger,
+	)
+	if err := service.UpdateUsers(identities, common.Map(users, func(it option.TrojanUser) string {
+		return it.Password
+	})); err != nil {
+		return nil, err
+	}
+	authorized := make(map[credential]struct{}, len(identities))
+	for _, identity := range identities {
+		authorized[identity.credential()] = struct{}{}
+	}
+	return &authenticator{service: service, authorized: authorized}, nil
+}
+
+// authorizeConnection resolves the identity of a freshly authenticated
+// connection, registers it, and only then checks it against the current
+// snapshot. The snapshot is captured before the Trojan key is read and a client
+// decides when to send it, so the check is what stops a password revoked
+// mid-handshake. Registering first is what closes the remaining window: an
+// update that publishes after the registration finds the connection in the
+// registry, and one that published before it is caught by the check, so there
+// is no point at which an authenticated connection is invisible to revocation.
+//
+// Callers must unregister the returned connection once they are done with it.
+func (h *Inbound) authorizeConnection(ctx context.Context, closer io.Closer) (userIdentity, *registeredConnection, error) {
+	identity, loaded := auth.UserFromContext[userIdentity](ctx)
+	if !loaded {
+		return userIdentity{}, nil, os.ErrInvalid
+	}
+	registered := h.connections.add(identity, closer)
+	current := h.auth.Load()
+	if current == nil || !current.authorizes(identity) {
+		h.connections.remove(registered)
+		return userIdentity{}, nil, os.ErrPermission
+	}
+	return identity, registered, nil
+}
+
 func (h *Inbound) newConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	metadata.Inbound = h.Tag()
 	metadata.InboundType = h.Type()
-	userIndex, loaded := auth.UserFromContext[int](ctx)
-	if !loaded {
-		N.CloseOnHandshakeFailure(conn, onClose, os.ErrInvalid)
+	userIdentity, registered, err := h.authorizeConnection(ctx, conn)
+	if err != nil {
+		N.CloseOnHandshakeFailure(conn, onClose, err)
 		return
 	}
-	user := h.users[userIndex].Name
+	defer h.connections.remove(registered)
+	user := userIdentity.Name
 	if user == "" {
-		user = F.ToString(userIndex)
+		user = F.ToString(userIdentity.Index)
 	} else {
 		metadata.User = user
 	}
@@ -202,14 +365,15 @@ func (h *Inbound) newConnection(ctx context.Context, conn net.Conn, metadata ada
 func (h *Inbound) newPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	metadata.Inbound = h.Tag()
 	metadata.InboundType = h.Type()
-	userIndex, loaded := auth.UserFromContext[int](ctx)
-	if !loaded {
-		N.CloseOnHandshakeFailure(conn, onClose, os.ErrInvalid)
+	userIdentity, registered, err := h.authorizeConnection(ctx, conn)
+	if err != nil {
+		N.CloseOnHandshakeFailure(conn, onClose, err)
 		return
 	}
-	user := h.users[userIndex].Name
+	defer h.connections.remove(registered)
+	user := userIdentity.Name
 	if user == "" {
-		user = F.ToString(userIndex)
+		user = F.ToString(userIdentity.Index)
 	} else {
 		metadata.User = user
 	}
