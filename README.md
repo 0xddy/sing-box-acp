@@ -1,10 +1,10 @@
 # sing-box-acp
 
-`sing-box-acp` 是为 ACP 节点运行时维护的 sing-box 定制分支，重点解决代理入站用户在运行期间更新、凭据轮换和会话撤销的问题。
+`sing-box-acp` 是面向 ACP 场景维护的 sing-box Go 库分支，为嵌入式运行时提供入站用户热更新、凭据轮换和会话撤销能力。
 
-本项目不是 SagerNet 官方发行版，也不代表或隶属于 SagerNet。仓库保留原项目的 Go 模块路径，以便 ACP 现有代码继续使用 `github.com/sagernet/sing-box` 包。
+本项目不是 SagerNet 官方发行版，也不代表或隶属于 SagerNet。仓库保留原项目的模块路径 `github.com/sagernet/sing-box`，以兼容现有 sing-box 包引用。
 
-## 当前基线
+## 版本基线
 
 | 组件 | 基线 |
 | --- | --- |
@@ -12,129 +12,121 @@
 | sing-quic | `d83826c306d7` |
 | Go | `1.24.7` 或更高兼容版本 |
 
-`go.mod` 使用本地替换，将 `github.com/sagernet/sing-quic` 指向 [`third_party/sing-quic-acp`](third_party/sing-quic-acp)。构建时不能删除该目录或移除对应的 `replace` 规则，否则 Hysteria2 的定向会话撤销能力会丢失。
+根模块通过 `replace` 将 `github.com/sagernet/sing-quic` 指向 [`third_party/sing-quic-acp`](third_party/sing-quic-acp)。该本地模块包含 Hysteria2 会话撤销所需的定制实现，集成时必须与主模块一起保留。
 
-## ACP 定制能力
+## 库能力
 
-### 无重启用户热更新
+### 原子用户热更新
 
-以下入站可以在监听器持续运行时替换认证用户：
+支持的协议入站可以在监听器持续运行时替换认证用户：
 
-| 协议 | 入站能力 | sing-box-acp 负责范围 | ACP 端到端结果 |
-| --- | --- | --- | --- |
-| Trojan | `UpdateUsers`、`CloseUserSessions` | 认证快照和路由交接窗口 | node-agent 继续关闭已路由的 TCP/UDP 连接 |
-| VLESS | `UpdateUsers`、`CloseUserSessions` | 认证快照和路由交接窗口 | node-agent 继续关闭已路由的 TCP/UDP 连接 |
-| Hysteria2 | `UpdateUsers`、`CloseUserSessions` | 认证快照和完整 QUIC 传输会话 | node-agent 同时清理已路由的连接记录 |
+| 协议 | `UpdateUsers` | `CloseUserSessions` |
+| --- | --- | --- |
+| Trojan | 原子替换用户与密码快照 | 关闭该用户仍处于路由交接窗口的连接 |
+| VLESS | 原子替换用户、UUID 与 Flow 快照 | 关闭该用户仍处于路由交接窗口的连接 |
+| Hysteria2 | 原子替换用户与密码快照，并撤销失效凭据对应的会话 | 关闭该用户的完整 QUIC 传输会话 |
 
-更新过程使用不可变认证快照：先完整构建并校验新用户表，再通过一次原子操作发布。无效的用户列表不会覆盖正在使用的认证数据，并发握手不会观察到半更新状态。
+更新时会先构建并校验完整的新认证快照，再通过一次原子操作发布。无效或重复的用户数据不会覆盖当前认证状态，并发握手不会观察到半更新数据。
 
-Trojan 和 VLESS 会为用户身份绑定凭据指纹。删除用户、修改密码或修改 VLESS Flow 后，旧身份无法继续通过路由交接窗口。Hysteria2 的认证和会话索引位于定制的 `sing-quic-acp` 中，更新用户表时只关闭被删除或凭据发生变化的用户会话；用户排序变化或新增其他用户不会中断仍然有效的连接。
+用户删除或凭据变化时，只撤销已经失效的身份。单纯调整用户顺序或添加其他用户，不会中断凭据仍然有效的会话。
 
-### 完整连接撤销链路
+### 连接所有权边界
 
-**与 ACP node-agent 配套运行时，用户连接撤销是完整实现的。** sing-box-acp 和 node-agent 分别管理连接生命周期的不同阶段，避免两边同时长期持有并重复关闭同一连接。
+Trojan 和 VLESS 在认证成功后，会暂时登记连接，直到 Router 完成嗅探、规则匹配并将连接交给 `adapter.ConnectionTracker`。这段时间称为“路由交接窗口”。
 
 ```mermaid
 flowchart LR
-    A["协议认证成功"] --> B["入站交接窗口<br/>sing-box-acp 管理"]
-    B --> C["Router 嗅探与规则匹配"]
-    C --> D["已路由连接<br/>node-agent 跟踪"]
-    D --> E["出站转发"]
-    K["踢下线或凭据撤销"] --> B
-    K --> D
+    A["协议认证"] --> B["入站交接窗口<br/>库内临时登记"]
+    B --> C["Router 路由处理"]
+    C --> D["ConnectionTracker<br/>调用方持有"]
 ```
 
-“路由交接窗口”是从协议认证成功，到 Router 调用流量跟踪器登记连接之间的一小段时间。Router 在此期间可能执行嗅探、规则匹配和出站选择，因此刚认证的连接还不能由 node-agent 按用户找到。Trojan/VLESS 入站会临时登记这些连接，防止它们在用户被删除、凭据轮换或踢下线时漏过撤销。
+`CloseUserSessions` 只处理协议入站仍然拥有的资源：
 
-node-agent 执行踢下线时严格按以下顺序处理：
+- Trojan/VLESS：关闭交接窗口内的连接；
+- Hysteria2：关闭对应用户的 QUIC 传输会话。
 
-1. 调用协议入站的 `CloseUserSessions`，先清空交接窗口；Hysteria2 同时关闭该用户的 QUIC 传输会话。
-2. 调用流量跟踪器的 `CloseUserConnections`，关闭已经由 Router 接管的 TCP 和 UDP 连接。
-3. 为已删除或禁用用户保留撤销标记，拒绝竞态中迟到的旧连接；仍获授权的用户可以重新认证并建立新连接。
-
-因此，Trojan/VLESS 的 `CloseUserSessions` 是端到端关闭流程的第一阶段，不是单独使用的“关闭该用户全部连接”接口。ACP 对外的完整操作由 node-agent 的 `CloseUserConnections` 统一协调。
+连接进入 `adapter.ConnectionTracker` 后，其生命周期归跟踪器实现方管理。需要关闭某个用户的全部存量连接时，调用方应先调用入站的 `CloseUserSessions`，再关闭自己通过 `ConnectionTracker` 登记的 TCP 和 UDP 连接。这个顺序可以避免连接在两个所有权阶段之间漏过撤销。
 
 ### 运行时入站管理
 
-入站管理器支持在进程运行期间创建、替换和删除入站。替换同名入站时会先启动新实例，再关闭旧实例，降低配置切换对服务可用性的影响。
+入站管理器支持在运行期间创建、替换和删除入站。替换同名入站时会先启动新实例，再关闭旧实例，减少切换期间的监听中断。
 
-### 连接生命周期保护
+### 并发与生命周期保护
 
-ACP 定制覆盖认证、路由交接和 QUIC 关闭过程中的竞态，包括：
+库内测试覆盖以下场景：
 
-- 更新发布期间仍在进行的握手；
-- 用户凭据轮换后的旧连接；
-- QUIC 主连接关闭后的 UDP 子会话清理；
-- 重复、无效用户数据导致的更新回滚；
+- 更新发布期间仍在进行的认证握手；
+- 用户删除、密码轮换和 VLESS Flow 变化；
+- 重复凭据导致的更新拒绝与状态回滚；
 - 并发用户更新与认证检查；
-- 入站交接窗口与已路由连接之间的无缝撤销。
+- QUIC 主连接关闭后的 UDP 子会话清理；
+- 路由交接窗口内的定向连接撤销。
 
-## 使用边界
+## 集成
 
-本分支没有新增 sing-box 配置字段。配置解析、命令行参数和常规代理行为继承自当前基线版本；ACP 功能通过 Go 运行时接口由节点控制层调用。
+该分支继续声明原始模块路径。通过本地源码集成时，在调用方的 `go.mod` 中添加：
 
-如果只把本项目当作普通 sing-box 可执行文件运行，现有配置仍可使用，但不会自动触发用户热更新和定向踢下线。
+```mod
+require github.com/sagernet/sing-box v1.13.16
 
-如果在其他程序中嵌入 sing-box-acp 而不使用 ACP node-agent，调用方需要自行实现 Router 流量跟踪器，并按照“先关闭入站交接窗口，再关闭已路由连接”的顺序协调撤销。否则，Trojan/VLESS 已经交给 Router 的存量连接会继续运行到自然关闭。
-
-## 构建
-
-克隆仓库后，在根目录执行：
-
-```bash
-go build -trimpath ./cmd/sing-box
+replace github.com/sagernet/sing-box => ../sing-box-acp
 ```
 
-使用仓库默认功能标签构建：
+路径应按实际目录结构调整。不要为本分支改写 import path。
 
-```bash
-make build
+协议能力使用结构化接口检测，不要求在 sing-box 公共 adapter 包中引入业务类型：
+
+```go
+type UserUpdater[T any] interface {
+	UpdateUsers(users []T) error
+}
+
+type UserSessionCloser interface {
+	CloseUserSessions(userID string) int
+}
 ```
 
-常用命令：
-
-```bash
-./sing-box version
-./sing-box check -c config.json
-./sing-box run -c config.json
-```
-
-Windows 下生成的程序名通常为 `sing-box.exe`。
+调用方可根据具体协议使用对应的 `option.*User` 类型断言 `UserUpdater[T]`，并通过 `UserSessionCloser` 撤销仍由入站持有的用户会话。
 
 ## 测试
 
-先运行 ACP 重点测试：
+运行主模块重点测试：
 
 ```bash
 go test ./adapter/inbound ./protocol/hysteria2 ./protocol/trojan ./protocol/vless
+```
+
+运行定制 sing-quic 模块测试：
+
+```bash
 go -C third_party/sing-quic-acp test ./...
 ```
 
-再运行主模块完整测试：
+运行主模块完整测试：
 
 ```bash
 go test ./...
 ```
 
-`dns/transport/hosts` 的测试会读取操作系统 hosts 文件，并要求其中存在有效的 `localhost` 映射；精简过的 Windows hosts 文件可能导致该环境测试失败。
+`dns/transport/hosts` 测试会读取操作系统 hosts 文件，并要求其中存在有效的 `localhost` 映射。精简过的 Windows hosts 文件可能导致该环境相关测试失败。
 
-## 目录说明
+## 关键目录
 
 ```text
 adapter/inbound/                 运行时入站创建、替换和删除
 protocol/trojan/                 Trojan 认证快照与交接窗口撤销
 protocol/vless/                  VLESS 认证快照与交接窗口撤销
 protocol/hysteria2/              Hysteria2 用户更新入口
-third_party/sing-quic-acp/       QUIC 会话索引、定向撤销及相关测试
+third_party/sing-quic-acp/       QUIC 认证快照、会话撤销及测试
 ```
 
-## 与上游同步
+## 上游维护
 
 - `upstream` 指向 `https://github.com/SagerNet/sing-box.git`；
-- `origin` 指向 ACP 维护仓库；
-- 升级 sing-box 基线时，同时核对其要求的 sing-quic 版本；
-- 先移植上游 sing-quic 变化，再重新应用并测试 ACP 会话撤销逻辑；
-- 不直接编辑生成文件或用上游模块覆盖 `third_party/sing-quic-acp`。
+- 升级 sing-box 基线时同步核对其要求的 sing-quic 版本；
+- 先移植 sing-quic 上游变化，再重新应用并测试 ACP 定制；
+- 不直接编辑生成文件，也不用上游模块覆盖 `third_party/sing-quic-acp`。
 
 ## 许可证
 
