@@ -20,17 +20,39 @@
 
 以下入站可以在监听器持续运行时替换认证用户：
 
-| 协议 | 用户更新 | 按用户踢下线 | 撤销范围 |
+| 协议 | 入站能力 | sing-box-acp 负责范围 | ACP 端到端结果 |
 | --- | --- | --- | --- |
-| Trojan | `UpdateUsers` | `CloseUserSessions` | 认证完成但尚未交给路由器的连接 |
-| VLESS | `UpdateUsers` | `CloseUserSessions` | 认证完成但尚未交给路由器的连接 |
-| Hysteria2 | `UpdateUsers` | `CloseUserSessions` | 已认证的完整 QUIC 会话 |
+| Trojan | `UpdateUsers`、`CloseUserSessions` | 认证快照和路由交接窗口 | node-agent 继续关闭已路由的 TCP/UDP 连接 |
+| VLESS | `UpdateUsers`、`CloseUserSessions` | 认证快照和路由交接窗口 | node-agent 继续关闭已路由的 TCP/UDP 连接 |
+| Hysteria2 | `UpdateUsers`、`CloseUserSessions` | 认证快照和完整 QUIC 传输会话 | node-agent 同时清理已路由的连接记录 |
 
 更新过程使用不可变认证快照：先完整构建并校验新用户表，再通过一次原子操作发布。无效的用户列表不会覆盖正在使用的认证数据，并发握手不会观察到半更新状态。
 
-Trojan 和 VLESS 会为用户身份绑定凭据指纹。删除用户、修改密码或修改 VLESS Flow 后，旧身份无法继续通过交接窗口。已经由路由器交给流量跟踪器的连接应由 ACP 上层控制器关闭。
+Trojan 和 VLESS 会为用户身份绑定凭据指纹。删除用户、修改密码或修改 VLESS Flow 后，旧身份无法继续通过路由交接窗口。Hysteria2 的认证和会话索引位于定制的 `sing-quic-acp` 中，更新用户表时只关闭被删除或凭据发生变化的用户会话；用户排序变化或新增其他用户不会中断仍然有效的连接。
 
-Hysteria2 的认证和会话索引位于定制的 `sing-quic-acp` 中。更新用户表时，仅关闭被删除或凭据发生变化的用户会话；用户排序变化或新增其他用户不会中断仍然有效的连接。
+### 完整连接撤销链路
+
+**与 ACP node-agent 配套运行时，用户连接撤销是完整实现的。** sing-box-acp 和 node-agent 分别管理连接生命周期的不同阶段，避免两边同时长期持有并重复关闭同一连接。
+
+```mermaid
+flowchart LR
+    A["协议认证成功"] --> B["入站交接窗口<br/>sing-box-acp 管理"]
+    B --> C["Router 嗅探与规则匹配"]
+    C --> D["已路由连接<br/>node-agent 跟踪"]
+    D --> E["出站转发"]
+    K["踢下线或凭据撤销"] --> B
+    K --> D
+```
+
+“路由交接窗口”是从协议认证成功，到 Router 调用流量跟踪器登记连接之间的一小段时间。Router 在此期间可能执行嗅探、规则匹配和出站选择，因此刚认证的连接还不能由 node-agent 按用户找到。Trojan/VLESS 入站会临时登记这些连接，防止它们在用户被删除、凭据轮换或踢下线时漏过撤销。
+
+node-agent 执行踢下线时严格按以下顺序处理：
+
+1. 调用协议入站的 `CloseUserSessions`，先清空交接窗口；Hysteria2 同时关闭该用户的 QUIC 传输会话。
+2. 调用流量跟踪器的 `CloseUserConnections`，关闭已经由 Router 接管的 TCP 和 UDP 连接。
+3. 为已删除或禁用用户保留撤销标记，拒绝竞态中迟到的旧连接；仍获授权的用户可以重新认证并建立新连接。
+
+因此，Trojan/VLESS 的 `CloseUserSessions` 是端到端关闭流程的第一阶段，不是单独使用的“关闭该用户全部连接”接口。ACP 对外的完整操作由 node-agent 的 `CloseUserConnections` 统一协调。
 
 ### 运行时入站管理
 
@@ -44,13 +66,16 @@ ACP 定制覆盖认证、路由交接和 QUIC 关闭过程中的竞态，包括�
 - 用户凭据轮换后的旧连接；
 - QUIC 主连接关闭后的 UDP 子会话清理；
 - 重复、无效用户数据导致的更新回滚；
-- 并发用户更新与认证检查。
+- 并发用户更新与认证检查；
+- 入站交接窗口与已路由连接之间的无缝撤销。
 
 ## 使用边界
 
 本分支没有新增 sing-box 配置字段。配置解析、命令行参数和常规代理行为继承自当前基线版本；ACP 功能通过 Go 运行时接口由节点控制层调用。
 
-如果只把本项目当作普通 sing-box 可执行文件运行，现有配置仍可使用，但用户热更新和定向踢下线需要控制层主动调用对应入站方法。
+如果只把本项目当作普通 sing-box 可执行文件运行，现有配置仍可使用，但不会自动触发用户热更新和定向踢下线。
+
+如果在其他程序中嵌入 sing-box-acp 而不使用 ACP node-agent，调用方需要自行实现 Router 流量跟踪器，并按照“先关闭入站交接窗口，再关闭已路由连接”的顺序协调撤销。否则，Trojan/VLESS 已经交给 Router 的存量连接会继续运行到自然关闭。
 
 ## 构建
 
