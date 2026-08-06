@@ -129,7 +129,7 @@ func (h *RelayInbound) newConnection(ctx context.Context, conn net.Conn, metadat
 	} else {
 		metadata.User = destination
 	}
-	h.logger.InfoContext(ctx, "[", destination, "] inbound connection to ", metadata.Destination)
+	h.logger.DebugContext(ctx, "[", destination, "] inbound connection to ", metadata.Destination)
 	metadata.Inbound = h.Tag()
 	metadata.InboundType = h.Type()
 	//nolint:staticcheck
@@ -150,8 +150,8 @@ func (h *RelayInbound) newPacketConnection(ctx context.Context, conn N.PacketCon
 		metadata.User = destination
 	}
 	ctx = log.ContextWithNewID(ctx)
-	h.logger.InfoContext(ctx, "[", destination, "] inbound packet connection from ", metadata.Source)
-	h.logger.InfoContext(ctx, "[", destination, "] inbound packet connection to ", metadata.Destination)
+	h.logger.DebugContext(ctx, "[", destination, "] inbound packet connection from ", metadata.Source)
+	h.logger.DebugContext(ctx, "[", destination, "] inbound packet connection to ", metadata.Destination)
 	metadata.Inbound = h.Tag()
 	metadata.InboundType = h.Type()
 	//nolint:staticcheck

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/inbound"
@@ -39,10 +40,23 @@ type Inbound struct {
 	router    adapter.ConnectionRouterEx
 	logger    logger.ContextLogger
 	listener  *listener.Listener
-	users     []option.VLESSUser
-	service   *vless.Service[int]
+	service   atomic.Pointer[vless.Service[userIdentity]]
 	tlsConfig tls.ServerConfig
 	transport adapter.V2RayServerTransport
+}
+
+type userIdentity struct {
+	Index int
+	Name  string
+}
+
+func userIdentities(users []option.VLESSUser) []userIdentity {
+	return common.MapIndexed(users, func(index int, user option.VLESSUser) userIdentity {
+		return userIdentity{
+			Index: index,
+			Name:  user.Name,
+		}
+	})
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.VLESSInboundOptions) (adapter.Inbound, error) {
@@ -51,22 +65,13 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		ctx:     ctx,
 		router:  uot.NewRouter(router, logger),
 		logger:  logger,
-		users:   options.Users,
 	}
 	var err error
 	inbound.router, err = mux.NewRouterWithOptions(inbound.router, logger, common.PtrValueOrDefault(options.Multiplex))
 	if err != nil {
 		return nil, err
 	}
-	service := vless.NewService[int](logger, adapter.NewUpstreamContextHandlerEx(inbound.newConnectionEx, inbound.newPacketConnectionEx))
-	service.UpdateUsers(common.MapIndexed(inbound.users, func(index int, _ option.VLESSUser) int {
-		return index
-	}), common.Map(inbound.users, func(it option.VLESSUser) string {
-		return it.UUID
-	}), common.Map(inbound.users, func(it option.VLESSUser) string {
-		return it.Flow
-	}))
-	inbound.service = service
+	inbound.service.Store(inbound.serviceForUsers(options.Users))
 	if options.TLS != nil {
 		inbound.tlsConfig, err = tls.NewServerWithOptions(tls.ServerOptions{
 			Context: ctx,
@@ -140,7 +145,7 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 
 func (h *Inbound) Close() error {
 	return common.Close(
-		h.service,
+		h.service.Load(),
 		h.listener,
 		h.tlsConfig,
 		h.transport,
@@ -157,51 +162,69 @@ func (h *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata a
 		}
 		conn = tlsConn
 	}
-	err := h.service.NewConnection(adapter.WithContext(ctx, &metadata), conn, metadata.Source, onClose)
+	service := h.service.Load()
+	if service == nil {
+		N.CloseOnHandshakeFailure(conn, onClose, os.ErrClosed)
+		return
+	}
+	err := service.NewConnection(adapter.WithContext(ctx, &metadata), conn, metadata.Source, onClose)
 	if err != nil {
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		h.logger.ErrorContext(ctx, E.Cause(err, "process connection from ", metadata.Source))
 	}
 }
 
+func (h *Inbound) serviceForUsers(users []option.VLESSUser) *vless.Service[userIdentity] {
+	service := vless.NewService[userIdentity](
+		h.logger,
+		adapter.NewUpstreamContextHandlerEx(h.newConnectionEx, h.newPacketConnectionEx),
+	)
+	service.UpdateUsers(userIdentities(users), common.Map(users, func(it option.VLESSUser) string {
+		return it.UUID
+	}), common.Map(users, func(it option.VLESSUser) string {
+		return it.Flow
+	}))
+	return service
+}
+
 func (h *Inbound) newConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	metadata.Inbound = h.Tag()
 	metadata.InboundType = h.Type()
-	userIndex, loaded := auth.UserFromContext[int](ctx)
+	userIdentity, loaded := auth.UserFromContext[userIdentity](ctx)
 	if !loaded {
 		N.CloseOnHandshakeFailure(conn, onClose, os.ErrInvalid)
 		return
 	}
-	user := h.users[userIndex].Name
+	user := userIdentity.Name
 	if user == "" {
-		user = F.ToString(userIndex)
+		user = F.ToString(userIdentity.Index)
 	} else {
 		metadata.User = user
 	}
-	h.logger.InfoContext(ctx, "[", user, "] inbound connection to ", metadata.Destination)
+	h.logger.DebugContext(ctx, "[", user, "] inbound connection to ", metadata.Destination)
 	h.router.RouteConnectionEx(ctx, conn, metadata, onClose)
 }
 
 func (h *Inbound) newPacketConnectionEx(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	metadata.Inbound = h.Tag()
 	metadata.InboundType = h.Type()
-	userIndex, loaded := auth.UserFromContext[int](ctx)
+	userIdentity, loaded := auth.UserFromContext[userIdentity](ctx)
 	if !loaded {
 		N.CloseOnHandshakeFailure(conn, onClose, os.ErrInvalid)
 		return
 	}
-	user := h.users[userIndex].Name
+	user := userIdentity.Name
 	if user == "" {
-		user = F.ToString(userIndex)
+		user = F.ToString(userIdentity.Index)
 	} else {
 		metadata.User = user
 	}
 	if metadata.Destination.Fqdn == packetaddr.SeqPacketMagicAddress {
 		metadata.Destination = M.Socksaddr{}
 		conn = packetaddr.NewConn(bufio.NewNetPacketConn(conn), metadata.Destination)
-		h.logger.InfoContext(ctx, "[", user, "] inbound packet addr connection")
+		h.logger.DebugContext(ctx, "[", user, "] inbound packet addr connection")
 	} else {
-		h.logger.InfoContext(ctx, "[", user, "] inbound packet connection to ", metadata.Destination)
+		h.logger.DebugContext(ctx, "[", user, "] inbound packet connection to ", metadata.Destination)
 	}
 	h.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
@@ -217,6 +240,6 @@ func (h *inboundTransportHandler) NewConnectionEx(ctx context.Context, conn net.
 	//nolint:staticcheck
 	metadata.InboundDetour = h.listener.ListenOptions().Detour
 	//nolint:staticcheck
-	h.logger.InfoContext(ctx, "inbound connection from ", metadata.Source)
+	h.logger.DebugContext(ctx, "inbound connection from ", metadata.Source)
 	(*Inbound)(h).NewConnectionEx(ctx, conn, metadata, onClose)
 }

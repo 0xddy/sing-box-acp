@@ -32,15 +32,15 @@ func (r *Router) RouteConnection(ctx context.Context, conn net.Conn, metadata ad
 			return E.Cause(err, "read UoT request")
 		}
 		if request.IsConnect {
-			r.logger.InfoContext(ctx, "inbound UoT connect connection to ", request.Destination)
+			r.logger.DebugContext(ctx, "inbound UoT connect connection to ", request.Destination)
 		} else {
-			r.logger.InfoContext(ctx, "inbound UoT connection to ", request.Destination)
+			r.logger.DebugContext(ctx, "inbound UoT connection to ", request.Destination)
 		}
 		metadata.Domain = metadata.Destination.Fqdn
 		metadata.Destination = request.Destination
 		return r.router.RoutePacketConnection(ctx, uot.NewConn(conn, *request), metadata)
 	case uot.LegacyMagicAddress:
-		r.logger.InfoContext(ctx, "inbound legacy UoT connection")
+		r.logger.DebugContext(ctx, "inbound legacy UoT connection")
 		metadata.Domain = metadata.Destination.Fqdn
 		metadata.Destination = M.Socksaddr{Addr: netip.IPv4Unspecified()}
 		return r.RoutePacketConnection(ctx, uot.NewConn(conn, uot.Request{}), metadata)
@@ -63,16 +63,16 @@ func (r *Router) RouteConnectionEx(ctx context.Context, conn net.Conn, metadata 
 			return
 		}
 		if request.IsConnect {
-			r.logger.InfoContext(ctx, "inbound UoT connect connection to ", request.Destination)
+			r.logger.DebugContext(ctx, "inbound UoT connect connection to ", request.Destination)
 		} else {
-			r.logger.InfoContext(ctx, "inbound UoT connection to ", request.Destination)
+			r.logger.DebugContext(ctx, "inbound UoT connection to ", request.Destination)
 		}
 		metadata.Domain = metadata.Destination.Fqdn
 		metadata.Destination = request.Destination
 		r.router.RoutePacketConnectionEx(ctx, uot.NewConn(conn, *request), metadata, onClose)
 		return
 	case uot.LegacyMagicAddress:
-		r.logger.InfoContext(ctx, "inbound legacy UoT connection")
+		r.logger.DebugContext(ctx, "inbound legacy UoT connection")
 		metadata.Domain = metadata.Destination.Fqdn
 		metadata.Destination = M.Socksaddr{Addr: netip.IPv4Unspecified()}
 		r.RoutePacketConnectionEx(ctx, uot.NewConn(conn, uot.Request{}), metadata, onClose)

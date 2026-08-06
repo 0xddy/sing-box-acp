@@ -169,7 +169,7 @@ func (h *MultiInbound) newConnection(ctx context.Context, conn net.Conn, metadat
 	} else {
 		metadata.User = user
 	}
-	h.logger.InfoContext(ctx, "[", user, "] inbound connection to ", metadata.Destination)
+	h.logger.DebugContext(ctx, "[", user, "] inbound connection to ", metadata.Destination)
 	metadata.Inbound = h.Tag()
 	metadata.InboundType = h.Type()
 	//nolint:staticcheck
@@ -193,8 +193,8 @@ func (h *MultiInbound) newPacketConnection(ctx context.Context, conn N.PacketCon
 		metadata.User = user
 	}
 	ctx = log.ContextWithNewID(ctx)
-	h.logger.InfoContext(ctx, "[", user, "] inbound packet connection from ", metadata.Source)
-	h.logger.InfoContext(ctx, "[", user, "] inbound packet connection to ", metadata.Destination)
+	h.logger.DebugContext(ctx, "[", user, "] inbound packet connection from ", metadata.Source)
+	h.logger.DebugContext(ctx, "[", user, "] inbound packet connection to ", metadata.Destination)
 	metadata.Inbound = h.Tag()
 	metadata.InboundType = h.Type()
 	//nolint:staticcheck

@@ -24,6 +24,13 @@ type UpdatableInbound[T any] interface {
 	UpdateUsers(users []T) error
 }
 
+// UserSessionCloser marks protocol inbounds that can close an authenticated
+// transport session for one user without restarting the listener.
+type UserSessionCloser interface {
+	Inbound
+	CloseUserSessions(userID string) int
+}
+
 // UpdatableShadowsocksInbound mirrors UpdatableInbound for Shadowsocks because
 // the upstream SSM API already uses UpdateUsers([]string, []string).
 type UpdatableShadowsocksInbound interface {

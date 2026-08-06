@@ -105,7 +105,7 @@ func (l *Listener) loopTCPIn() {
 		metadata.Source = M.SocksaddrFromNet(conn.RemoteAddr()).Unwrap()
 		metadata.OriginDestination = M.SocksaddrFromNet(conn.LocalAddr()).Unwrap()
 		ctx := log.ContextWithNewID(l.ctx)
-		l.logger.InfoContext(ctx, "inbound connection from ", metadata.Source)
+		l.logger.DebugContext(ctx, "inbound connection from ", metadata.Source)
 		go l.connHandler.NewConnectionEx(ctx, conn, metadata, nil)
 	}
 }

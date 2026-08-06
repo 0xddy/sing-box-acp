@@ -98,13 +98,13 @@ func (i *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata a
 	}
 	metadata.Destination = destination
 	if i.overrideOption != 0 {
-		i.logger.InfoContext(ctx, "inbound connection to ", metadata.Destination)
+		i.logger.DebugContext(ctx, "inbound connection to ", metadata.Destination)
 	}
 	i.router.RouteConnectionEx(ctx, conn, metadata, onClose)
 }
 
 func (i *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
-	i.logger.InfoContext(ctx, "inbound packet connection from ", source)
+	i.logger.DebugContext(ctx, "inbound packet connection from ", source)
 	var metadata adapter.InboundContext
 	metadata.Inbound = i.Tag()
 	metadata.InboundType = i.Type()
@@ -122,7 +122,7 @@ func (i *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, 
 		destination.Port = i.overrideDestination.Port
 	default:
 	}
-	i.logger.InfoContext(ctx, "inbound packet connection to ", destination)
+	i.logger.DebugContext(ctx, "inbound packet connection to ", destination)
 	metadata.Destination = destination
 	if i.overrideOption != 0 {
 		conn = bufio.NewDestinationNATPacketConn(bufio.NewNetPacketConn(conn), i.listener.UDPAddr(), destination)

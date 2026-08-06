@@ -133,7 +133,11 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 			err = adapter.LegacyStart(inbound, stage)
 			done()
 			if err != nil {
-				return E.Cause(err, stage, " ", name)
+				startErr := E.Cause(err, stage, " ", name)
+				if closeErr := inbound.Close(); closeErr != nil {
+					return E.Errors(startErr, E.Cause(closeErr, "close failed inbound ", name))
+				}
+				return startErr
 			}
 		}
 	}
@@ -141,7 +145,15 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		if m.started {
 			err = existsInbound.Close()
 			if err != nil {
-				return E.Cause(err, "close inbound/", existsInbound.Type(), "[", existsInbound.Tag(), "]")
+				existingCloseErr := E.Cause(err, "close inbound/", existsInbound.Type(), "[", existsInbound.Tag(), "]")
+				closeErr := inbound.Close()
+				if closeErr != nil {
+					return E.Errors(
+						existingCloseErr,
+						E.Cause(closeErr, "close replacement inbound/", inbound.Type(), "[", inbound.Tag(), "]"),
+					)
+				}
+				return existingCloseErr
 			}
 		}
 		existsIndex := common.Index(m.inbounds, func(it adapter.Inbound) bool {

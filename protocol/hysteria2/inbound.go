@@ -2,6 +2,7 @@ package hysteria2
 
 import (
 	"context"
+	"crypto/sha256"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -30,12 +31,28 @@ func RegisterInbound(registry *inbound.Registry) {
 
 type Inbound struct {
 	inbound.Adapter
-	router       adapter.Router
-	logger       log.ContextLogger
-	listener     *listener.Listener
-	tlsConfig    tls.ServerConfig
-	service      *hysteria2.Service[int]
-	userNameList []string
+	router        adapter.Router
+	logger        log.ContextLogger
+	listener      *listener.Listener
+	tlsConfig     tls.ServerConfig
+	service       *hysteria2.Service[userIdentity]
+	serviceCancel context.CancelFunc
+}
+
+type userIdentity struct {
+	Name                  string
+	CredentialFingerprint [sha256.Size]byte
+}
+
+func userIdentities(users []option.Hysteria2User) []userIdentity {
+	identities := make([]userIdentity, 0, len(users))
+	for _, user := range users {
+		identities = append(identities, userIdentity{
+			Name:                  user.Name,
+			CredentialFingerprint: sha256.Sum256([]byte(user.Password)),
+		})
+	}
+	return identities
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2InboundOptions) (adapter.Inbound, error) {
@@ -107,14 +124,16 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}),
 		tlsConfig: tlsConfig,
 	}
+	serviceCtx, serviceCancel := context.WithCancel(ctx)
+	inbound.serviceCancel = serviceCancel
 	var udpTimeout time.Duration
 	if options.UDPTimeout != 0 {
 		udpTimeout = time.Duration(options.UDPTimeout)
 	} else {
 		udpTimeout = C.UDPTimeout
 	}
-	service, err := hysteria2.NewService[int](hysteria2.ServiceOptions{
-		Context:               ctx,
+	service, err := hysteria2.NewService[userIdentity](hysteria2.ServiceOptions{
+		Context:               serviceCtx,
 		Logger:                logger,
 		BrutalDebug:           options.BrutalDebug,
 		SendBPS:               uint64(options.UpMbps * hysteria.MbpsToBps),
@@ -127,19 +146,15 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		MasqueradeHandler:     masqueradeHandler,
 	})
 	if err != nil {
+		serviceCancel()
 		return nil, err
 	}
-	userList := make([]int, 0, len(options.Users))
-	userNameList := make([]string, 0, len(options.Users))
 	userPasswordList := make([]string, 0, len(options.Users))
-	for index, user := range options.Users {
-		userList = append(userList, index)
-		userNameList = append(userNameList, user.Name)
+	for _, user := range options.Users {
 		userPasswordList = append(userPasswordList, user.Password)
 	}
-	service.UpdateUsers(userList, userPasswordList)
+	service.UpdateUsers(userIdentities(options.Users), userPasswordList)
 	inbound.service = service
-	inbound.userNameList = userNameList
 	return inbound, nil
 }
 
@@ -154,13 +169,13 @@ func (h *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, source M.S
 	metadata.OriginDestination = h.listener.UDPAddr()
 	metadata.Source = source
 	metadata.Destination = destination
-	h.logger.InfoContext(ctx, "inbound connection from ", metadata.Source)
-	userID, _ := auth.UserFromContext[int](ctx)
-	if userName := h.userNameList[userID]; userName != "" {
-		metadata.User = userName
-		h.logger.InfoContext(ctx, "[", userName, "] inbound connection to ", metadata.Destination)
+	h.logger.DebugContext(ctx, "inbound connection from ", metadata.Source)
+	user, loaded := auth.UserFromContext[userIdentity](ctx)
+	if loaded && user.Name != "" {
+		metadata.User = user.Name
+		h.logger.DebugContext(ctx, "[", user.Name, "] inbound connection to ", metadata.Destination)
 	} else {
-		h.logger.InfoContext(ctx, "inbound connection to ", metadata.Destination)
+		h.logger.DebugContext(ctx, "inbound connection to ", metadata.Destination)
 	}
 	h.router.RouteConnectionEx(ctx, conn, metadata, onClose)
 }
@@ -176,13 +191,13 @@ func (h *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, 
 	metadata.OriginDestination = h.listener.UDPAddr()
 	metadata.Source = source
 	metadata.Destination = destination
-	h.logger.InfoContext(ctx, "inbound packet connection from ", metadata.Source)
-	userID, _ := auth.UserFromContext[int](ctx)
-	if userName := h.userNameList[userID]; userName != "" {
-		metadata.User = userName
-		h.logger.InfoContext(ctx, "[", userName, "] inbound packet connection to ", metadata.Destination)
+	h.logger.DebugContext(ctx, "inbound packet connection from ", metadata.Source)
+	user, loaded := auth.UserFromContext[userIdentity](ctx)
+	if loaded && user.Name != "" {
+		metadata.User = user.Name
+		h.logger.DebugContext(ctx, "[", user.Name, "] inbound packet connection to ", metadata.Destination)
 	} else {
-		h.logger.InfoContext(ctx, "inbound packet connection to ", metadata.Destination)
+		h.logger.DebugContext(ctx, "inbound packet connection to ", metadata.Destination)
 	}
 	h.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
@@ -205,9 +220,16 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 }
 
 func (h *Inbound) Close() error {
+	h.cancelService()
 	return common.Close(
 		h.listener,
 		h.tlsConfig,
 		common.PtrOrNil(h.service),
 	)
+}
+
+func (h *Inbound) cancelService() {
+	if h.serviceCancel != nil {
+		h.serviceCancel()
+	}
 }

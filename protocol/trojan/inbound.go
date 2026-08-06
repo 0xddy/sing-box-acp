@@ -195,7 +195,7 @@ func (h *Inbound) newConnection(ctx context.Context, conn net.Conn, metadata ada
 	} else {
 		metadata.User = user
 	}
-	h.logger.InfoContext(ctx, "[", user, "] inbound connection to ", metadata.Destination)
+	h.logger.DebugContext(ctx, "[", user, "] inbound connection to ", metadata.Destination)
 	h.router.RouteConnectionEx(ctx, conn, metadata, onClose)
 }
 
@@ -213,7 +213,7 @@ func (h *Inbound) newPacketConnection(ctx context.Context, conn N.PacketConn, me
 	} else {
 		metadata.User = user
 	}
-	h.logger.InfoContext(ctx, "[", user, "] inbound packet connection to ", metadata.Destination)
+	h.logger.DebugContext(ctx, "[", user, "] inbound packet connection to ", metadata.Destination)
 	h.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
 
@@ -242,7 +242,7 @@ func (h *Inbound) fallbackConnection(ctx context.Context, conn net.Conn, metadat
 	metadata.Inbound = h.Tag()
 	metadata.InboundType = h.Type()
 	metadata.Destination = fallbackAddr
-	h.logger.InfoContext(ctx, "fallback connection to ", fallbackAddr)
+	h.logger.DebugContext(ctx, "fallback connection to ", fallbackAddr)
 	h.router.RouteConnectionEx(ctx, conn, metadata, onClose)
 }
 
@@ -257,6 +257,6 @@ func (h *inboundTransportHandler) NewConnectionEx(ctx context.Context, conn net.
 	//nolint:staticcheck
 	metadata.InboundDetour = h.listener.ListenOptions().Detour
 	//nolint:staticcheck
-	h.logger.InfoContext(ctx, "inbound connection from ", metadata.Source)
+	h.logger.DebugContext(ctx, "inbound connection from ", metadata.Source)
 	(*Inbound)(h).NewConnectionEx(ctx, conn, metadata, onClose)
 }
