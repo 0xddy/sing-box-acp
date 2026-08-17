@@ -8,7 +8,7 @@
 
 | 组件 | 基线 |
 | --- | --- |
-| sing-box | `v1.13.16` |
+| sing-box | `v1.13.19` |
 | sing-quic | `d83826c306d7` |
 | Go | `1.24.7` 或更高兼容版本 |
 
@@ -68,7 +68,7 @@ flowchart LR
 该分支继续声明原始模块路径。通过本地源码集成时，在调用方的 `go.mod` 中添加：
 
 ```mod
-require github.com/sagernet/sing-box v1.13.16
+require github.com/sagernet/sing-box v1.13.19
 
 replace github.com/sagernet/sing-box => ../sing-box-acp
 ```
