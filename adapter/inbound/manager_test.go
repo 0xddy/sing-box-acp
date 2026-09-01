@@ -30,6 +30,10 @@ type singleInboundRegistry struct {
 	inbound adapter.Inbound
 }
 
+func (r *singleInboundRegistry) OptionTypes() []string {
+	return []string{"test"}
+}
+
 func (r *singleInboundRegistry) CreateOptions(string) (any, bool) {
 	return nil, true
 }

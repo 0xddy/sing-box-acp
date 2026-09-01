@@ -3,10 +3,41 @@ package hysteria2
 import (
 	"context"
 	"crypto/sha256"
+	"net/netip"
+	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/json/badoption"
 )
+
+type afterFuncTrackingContext struct {
+	context.Context
+	active atomic.Int32
+}
+
+// Hide the wrapped cancel context so child retention is observable through AfterFunc.
+func (c *afterFuncTrackingContext) Value(any) any {
+	return nil
+}
+
+func (c *afterFuncTrackingContext) AfterFunc(f func()) func() bool {
+	c.active.Add(1)
+	stop := context.AfterFunc(c.Context, func() {
+		c.active.Add(-1)
+		f()
+	})
+	return func() bool {
+		if !stop() {
+			return false
+		}
+		c.active.Add(-1)
+		return true
+	}
+}
 
 func TestInboundCloseCancelsExistingServiceSessions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -17,6 +48,33 @@ func TestInboundCloseCancelsExistingServiceSessions(t *testing.T) {
 	case <-ctx.Done():
 	default:
 		t.Fatal("inbound close did not cancel the service context")
+	}
+}
+
+func TestNewInboundRealmValidationDoesNotRetainServiceContext(t *testing.T) {
+	parentCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &afterFuncTrackingContext{Context: parentCtx}
+
+	_, err := NewInbound(ctx, nil, log.NewNOPFactory().NewLogger("test"), "test", option.Hysteria2InboundOptions{
+		ListenOptions: option.ListenOptions{
+			Listen: common.Ptr(badoption.Addr(netip.IPv4Unspecified())),
+		},
+		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
+			TLS: &option.InboundTLSOptions{
+				Enabled:  true,
+				Insecure: true,
+			},
+		},
+		Realm: &option.Hysteria2InboundRealm{
+			Hysteria2Realm: option.Hysteria2Realm{IPVersion: 6},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "realm.ip_version 6 conflicts with listen address") {
+		t.Fatalf("NewInbound() error = %v, want Realm IP version conflict", err)
+	}
+	if active := ctx.active.Load(); active != 0 {
+		t.Fatalf("active service context registrations = %d, want 0 after constructor failure", active)
 	}
 }
 

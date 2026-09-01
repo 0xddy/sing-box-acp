@@ -288,7 +288,7 @@ func (h *Inbound) Close() error {
 	)
 }
 
-func (h *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	if h.tlsConfig != nil && h.transport == nil {
 		tlsConn, err := tls.ServerHandshake(ctx, conn, h.tlsConfig)
 		if err != nil {
@@ -329,7 +329,7 @@ func (h *Inbound) authenticatorForUsers(users []option.VLESSUser) (*authenticato
 	}
 	service := vless.NewService[userIdentity](
 		h.logger,
-		adapter.NewUpstreamContextHandlerEx(h.newConnectionEx, h.newPacketConnectionEx),
+		adapter.NewUpstreamContextHandler(h.newConnectionEx, h.newPacketConnectionEx),
 	)
 	service.UpdateUsers(identities, common.Map(users, func(it option.VLESSUser) string {
 		return it.UUID
@@ -420,5 +420,5 @@ func (h *inboundTransportHandler) NewConnectionEx(ctx context.Context, conn net.
 	metadata.InboundDetour = h.listener.ListenOptions().Detour
 	//nolint:staticcheck
 	h.logger.DebugContext(ctx, "inbound connection from ", metadata.Source)
-	(*Inbound)(h).NewConnectionEx(ctx, conn, metadata, onClose)
+	(*Inbound)(h).NewConnection(ctx, conn, metadata, onClose)
 }

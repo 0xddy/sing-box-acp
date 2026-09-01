@@ -436,16 +436,19 @@ func testTLSConfigs(t *testing.T) (aTLS.ServerConfig, aTLS.Config) {
 // testTLSConfig is the minimal aTLS.Config / aTLS.ServerConfig adapter over a
 // standard library configuration; sing only ships the interfaces.
 type testTLSConfig struct {
-	config *tls.Config
+	config           *tls.Config
+	handshakeTimeout time.Duration
 }
 
-func (c *testTLSConfig) ServerName() string                  { return c.config.ServerName }
-func (c *testTLSConfig) SetServerName(serverName string)     { c.config.ServerName = serverName }
-func (c *testTLSConfig) NextProtos() []string                { return c.config.NextProtos }
-func (c *testTLSConfig) SetNextProtos(nextProto []string)    { c.config.NextProtos = nextProto }
-func (c *testTLSConfig) STDConfig() (*aTLS.STDConfig, error) { return c.config, nil }
-func (c *testTLSConfig) Start() error                        { return nil }
-func (c *testTLSConfig) Close() error                        { return nil }
+func (c *testTLSConfig) ServerName() string                        { return c.config.ServerName }
+func (c *testTLSConfig) SetServerName(serverName string)           { c.config.ServerName = serverName }
+func (c *testTLSConfig) NextProtos() []string                      { return c.config.NextProtos }
+func (c *testTLSConfig) SetNextProtos(nextProto []string)          { c.config.NextProtos = nextProto }
+func (c *testTLSConfig) HandshakeTimeout() time.Duration           { return c.handshakeTimeout }
+func (c *testTLSConfig) SetHandshakeTimeout(timeout time.Duration) { c.handshakeTimeout = timeout }
+func (c *testTLSConfig) STDConfig() (*aTLS.STDConfig, error)       { return c.config, nil }
+func (c *testTLSConfig) Start() error                              { return nil }
+func (c *testTLSConfig) Close() error                              { return nil }
 
 func (c *testTLSConfig) Client(conn net.Conn) (aTLS.Conn, error) {
 	return tls.Client(conn, c.config), nil
@@ -456,5 +459,5 @@ func (c *testTLSConfig) Server(conn net.Conn) (aTLS.Conn, error) {
 }
 
 func (c *testTLSConfig) Clone() aTLS.Config {
-	return &testTLSConfig{config: c.config.Clone()}
+	return &testTLSConfig{config: c.config.Clone(), handshakeTimeout: c.handshakeTimeout}
 }
