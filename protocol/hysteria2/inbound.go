@@ -141,8 +141,6 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}),
 		tlsConfig: tlsConfig,
 	}
-	serviceCtx, serviceCancel := context.WithCancel(ctx)
-	inbound.serviceCancel = serviceCancel
 	var udpTimeout time.Duration
 	if options.UDPTimeout != 0 {
 		udpTimeout = time.Duration(options.UDPTimeout)
@@ -195,6 +193,8 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			}
 		}
 	}
+	serviceCtx, serviceCancel := context.WithCancel(ctx)
+	inbound.serviceCancel = serviceCancel
 	hysteriaService, err := hysteria2.NewService[userIdentity](hysteria2.ServiceOptions{
 		Context:            serviceCtx,
 		Logger:             logger,
