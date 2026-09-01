@@ -199,7 +199,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			}
 			inbound.fallbackAddrTLSNextProto = fallbackAddrNextProto
 		}
-		fallbackHandler = adapter.NewUpstreamContextHandlerEx(inbound.fallbackConnection, nil)
+		fallbackHandler = adapter.NewUpstreamContextHandler(inbound.fallbackConnection, nil)
 	}
 	inbound.fallbackHandler = fallbackHandler
 	initialAuth, err := inbound.authenticatorForUsers(options.Users)
@@ -275,7 +275,7 @@ func (h *Inbound) Close() error {
 	)
 }
 
-func (h *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	if h.tlsConfig != nil && h.transport == nil {
 		tlsConn, err := tls.ServerHandshake(ctx, conn, h.tlsConfig)
 		if err != nil {
@@ -303,7 +303,7 @@ func (h *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata a
 func (h *Inbound) authenticatorForUsers(users []option.TrojanUser) (*authenticator, error) {
 	identities := userIdentities(users)
 	service := trojan.NewService[userIdentity](
-		adapter.NewUpstreamContextHandlerEx(h.newConnection, h.newPacketConnection),
+		adapter.NewUpstreamContextHandler(h.newConnection, h.newPacketConnection),
 		h.fallbackHandler,
 		h.logger,
 	)
@@ -422,5 +422,5 @@ func (h *inboundTransportHandler) NewConnectionEx(ctx context.Context, conn net.
 	metadata.InboundDetour = h.listener.ListenOptions().Detour
 	//nolint:staticcheck
 	h.logger.DebugContext(ctx, "inbound connection from ", metadata.Source)
-	(*Inbound)(h).NewConnectionEx(ctx, conn, metadata, onClose)
+	(*Inbound)(h).NewConnection(ctx, conn, metadata, onClose)
 }
