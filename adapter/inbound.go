@@ -65,8 +65,14 @@ type InboundContext struct {
 	Domain       string
 	Client       string
 	SniffContext any
-	SnifferNames []string
-	SniffError   error
+	// SniffDomain is a payload-derived HTTP Host or TLS/QUIC SNI. Domain may
+	// also contain a reverse-DNS hint, so accounting must use this field.
+	SniffDomain string
+	// SniffDestination identifies the UDP target whose payload produced the
+	// sniffed protocol/domain. A zero value means no reliable UDP attribution.
+	SniffDestination M.Socksaddr
+	SnifferNames     []string
+	SniffError       error
 
 	// cache
 

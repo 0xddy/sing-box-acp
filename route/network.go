@@ -61,10 +61,11 @@ type NetworkManager struct {
 	environmentUpdateTimer   *time.Timer
 	interfaceUpdateAccess    sync.Mutex
 	interfaceUpdateCancel    context.CancelFunc
+	interfaceUpdatesClosed   bool // guarded by interfaceUpdateAccess
 	interfaceUpdateRunAccess sync.Mutex
 	powerUpdateAccess        sync.Mutex
 	powerUpdateCancel        context.CancelFunc
-	started                  bool
+	started                  bool // guarded by interfaceUpdateRunAccess
 }
 
 func NewNetworkManager(ctx context.Context, logger logger.ContextLogger, options option.RouteOptions, dnsOptions option.DNSOptions) (*NetworkManager, error) {
@@ -217,7 +218,11 @@ func (r *NetworkManager) Start(stage adapter.StartStage) error {
 				}
 			}
 		}
-		r.started = true
+		r.interfaceUpdateRunAccess.Lock()
+		r.interfaceUpdateAccess.Lock()
+		r.started = !r.interfaceUpdatesClosed
+		r.interfaceUpdateAccess.Unlock()
+		r.interfaceUpdateRunAccess.Unlock()
 	}
 	return nil
 }
@@ -233,6 +238,19 @@ func (r *NetworkManager) Initialize(ruleSets []adapter.RuleSet) {
 }
 
 func (r *NetworkManager) Close() error {
+	// Stop admitting callbacks, cancel their I/O, then wait for the last update
+	// before tearing down managers it can access through ResetNetwork.
+	r.interfaceUpdateAccess.Lock()
+	r.interfaceUpdatesClosed = true
+	interfaceUpdateCancel := r.interfaceUpdateCancel
+	r.interfaceUpdateCancel = nil
+	r.interfaceUpdateAccess.Unlock()
+	if interfaceUpdateCancel != nil {
+		interfaceUpdateCancel()
+	}
+	r.interfaceUpdateRunAccess.Lock()
+	r.started = false
+	r.interfaceUpdateRunAccess.Unlock()
 	monitor := taskmonitor.New(r.logger, C.StopTimeout)
 	var err error
 	if r.packageManager != nil {
@@ -255,13 +273,6 @@ func (r *NetworkManager) Close() error {
 			return E.Cause(err, "close interface monitor")
 		})
 		monitor.Finish()
-	}
-	r.interfaceUpdateAccess.Lock()
-	interfaceUpdateCancel := r.interfaceUpdateCancel
-	r.interfaceUpdateCancel = nil
-	r.interfaceUpdateAccess.Unlock()
-	if interfaceUpdateCancel != nil {
-		interfaceUpdateCancel()
 	}
 	r.cancelPowerUpdate()
 	if r.networkMonitor != nil {
@@ -510,17 +521,22 @@ func (r *NetworkManager) ResetNetwork(ctx context.Context) {
 }
 
 func (r *NetworkManager) notifyInterfaceUpdate(defaultInterface *control.Interface, flags int) {
+	r.interfaceUpdateAccess.Lock()
+	if r.interfaceUpdatesClosed {
+		r.interfaceUpdateAccess.Unlock()
+		return
+	}
 	if defaultInterface == nil {
+		r.interfaceUpdateAccess.Unlock()
 		r.pauseManager.NetworkPause()
 		r.logger.Error("missing default interface")
 		return
 	}
-	r.pauseManager.NetworkWake()
 	updateContext, updateCancel := context.WithCancel(r.ctx)
-	r.interfaceUpdateAccess.Lock()
 	previousCancel := r.interfaceUpdateCancel
 	r.interfaceUpdateCancel = updateCancel
 	r.interfaceUpdateAccess.Unlock()
+	r.pauseManager.NetworkWake()
 	if previousCancel != nil {
 		previousCancel()
 	}

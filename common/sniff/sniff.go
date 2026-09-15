@@ -39,12 +39,21 @@ func Skip(metadata *adapter.InboundContext) bool {
 }
 
 func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.Conn, buffers []*buf.Buffer, buffer *buf.Buffer, timeout time.Duration, sniffers ...StreamSniffer) error {
+	metadata.SniffDomain = ""
 	if timeout == 0 {
 		timeout = C.ReadPayloadTimeout
 	}
 	deadline := time.Now().Add(timeout)
+	sniffCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 	var sniffError error
 	for i := 0; ; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return context.DeadlineExceeded
+		}
 		err := conn.SetReadDeadline(deadline)
 		if err != nil {
 			return E.Cause(err, "set read deadline")
@@ -59,10 +68,13 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 		}
 		sniffError = nil
 		for _, sniffer := range sniffers {
+			if err := sniffCtx.Err(); err != nil {
+				return err
+			}
 			reader := io.MultiReader(common.Map(append(buffers, buffer), func(it *buf.Buffer) io.Reader {
 				return bytes.NewReader(it.Bytes())
 			})...)
-			err = sniffer(ctx, metadata, reader)
+			err = sniffer(sniffCtx, metadata, reader)
 			if err == nil {
 				return nil
 			}
@@ -78,6 +90,9 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 func PeekPacket(ctx context.Context, metadata *adapter.InboundContext, packet []byte, sniffers ...PacketSniffer) error {
 	var sniffError []error
 	for _, sniffer := range sniffers {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		err := sniffer(ctx, metadata, packet)
 		if err == nil {
 			return nil

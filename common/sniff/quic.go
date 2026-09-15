@@ -7,6 +7,7 @@ import (
 	"crypto/aes"
 	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"io"
 	"os"
 
@@ -20,7 +21,15 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, packet []byte) error {
+func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, packet []byte) (sniffErr error) {
+	defer func() {
+		if sniffErr != nil && !errors.Is(sniffErr, ErrNeedMoreData) {
+			metadata.SniffContext = nil
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	reader := bytes.NewReader(packet)
 	typeByte, err := reader.ReadByte()
 	if err != nil {
@@ -83,7 +92,7 @@ func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, pack
 	}
 
 	hdrLen := int(reader.Size()) - reader.Len()
-	if hdrLen+int(packetLen) > len(packet) {
+	if packetLen > uint64(len(packet)-hdrLen) {
 		return os.ErrInvalid
 	}
 
@@ -147,6 +156,9 @@ func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, pack
 		return E.New("bad packet number length")
 	}
 	extHdrLen := hdrLen + int(packetNumberLength)
+	if packetLen < uint64(packetNumberLength)+16 {
+		return os.ErrInvalid
+	}
 	copy(newPacket[extHdrLen:hdrLen+4], packet[extHdrLen:])
 	data := newPacket[extHdrLen : int(packetLen)+hdrLen]
 
@@ -183,6 +195,9 @@ func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, pack
 	)
 	var frameTypeList []uint8
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		frameType, err = decryptedReader.ReadByte()
 		if err == io.EOF {
 			break
@@ -246,6 +261,9 @@ func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, pack
 				return err
 			}
 			index := len(decrypted) - decryptedReader.Len()
+			if length == 0 || length > uint64(decryptedReader.Len()) || offset > maxQUICCryptoBytes || length > maxQUICCryptoBytes-offset || len(fragments) >= maxQUICCryptoFragments {
+				return os.ErrInvalid
+			}
 			fragments = append(fragments, qCryptoFragment{offset, length, decrypted[index : index+int(length)]})
 			_, err = decryptedReader.Seek(int64(length), io.SeekCurrent)
 			if err != nil {
@@ -274,32 +292,23 @@ func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, pack
 		}
 	}
 	if metadata.SniffContext != nil {
-		fragments = append(fragments, metadata.SniffContext.([]qCryptoFragment)...)
+		retained, ok := metadata.SniffContext.([]qCryptoFragment)
+		if !ok {
+			return os.ErrInvalid
+		}
+		fragments = append(fragments, retained...)
 		metadata.SniffContext = nil
 	}
-	var frameLen uint64
-	for _, fragment := range fragments {
-		frameLen += fragment.length
+	payload, err := assembleQUICCrypto(ctx, fragments)
+	if err != nil {
+		return err
 	}
-	buffer := buf.NewSize(5 + int(frameLen))
+	buffer := buf.NewSize(5 + len(payload))
 	defer buffer.Release()
 	buffer.WriteByte(0x16)
 	binary.Write(buffer, binary.BigEndian, uint16(0x0303))
-	binary.Write(buffer, binary.BigEndian, uint16(frameLen))
-	var index uint64
-	var length int
-find:
-	for {
-		for _, fragment := range fragments {
-			if fragment.offset == index {
-				buffer.Write(fragment.payload)
-				index = fragment.offset + fragment.length
-				length++
-				continue find
-			}
-		}
-		break
-	}
+	binary.Write(buffer, binary.BigEndian, uint16(len(payload)))
+	buffer.Write(payload)
 	metadata.Protocol = C.ProtocolQUIC
 	fingerprint, err := ja3.Compute(buffer.Bytes())
 	if err != nil {
@@ -307,6 +316,7 @@ find:
 		return E.Cause1(ErrNeedMoreData, err)
 	}
 	metadata.Domain = fingerprint.ServerName
+	metadata.SniffDomain = analysisServerName(fingerprint.ServerName, fingerprint.Extensions)
 	for metadata.Client == "" {
 		if len(frameTypeList) == 1 {
 			metadata.Client = C.ClientFirefox

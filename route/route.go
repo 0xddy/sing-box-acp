@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/netip"
 	"strings"
-	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/sniff"
@@ -766,102 +765,12 @@ func (r *Router) actionSniff(
 			r.logger.DebugContext(ctx, "packet sniff skipped due to previous error: ", metadata.SniffError)
 			return
 		}
-		quicMoreData := func() bool {
-			return slices.Equal(metadata.SnifferNames, action.SnifferNames) && errors.Is(metadata.SniffError, sniff.ErrNeedMoreData)
-		}
-		var packetSniffers []sniff.PacketSniffer
-		if len(action.PacketSniffers) > 0 {
-			packetSniffers = action.PacketSniffers
-		} else {
+		packetSniffers := action.PacketSniffers
+		if len(packetSniffers) == 0 {
 			packetSniffers = defaultPacketSniffers
 		}
-		var err error
-		for _, packetBuffer := range inputPacketBuffers {
-			if quicMoreData() {
-				err = sniff.PeekPacket(
-					ctx,
-					metadata,
-					packetBuffer.Buffer.Bytes(),
-					sniff.QUICClientHello,
-				)
-			} else {
-				err = sniff.PeekPacket(
-					ctx, metadata,
-					packetBuffer.Buffer.Bytes(),
-					packetSniffers...,
-				)
-			}
-			metadata.SnifferNames = action.SnifferNames
-			metadata.SniffError = err
-			if errors.Is(err, sniff.ErrNeedMoreData) {
-				// TODO: replace with generic message when there are more multi-packet protocols
-				r.logger.DebugContext(ctx, "attempt to sniff fragmented QUIC client hello")
-				continue
-			}
-			goto finally
-		}
-		packetBuffers = inputPacketBuffers
-		for {
-			var (
-				sniffBuffer = buf.NewPacket()
-				destination M.Socksaddr
-				done        = make(chan struct{})
-			)
-			go func() {
-				sniffTimeout := C.ReadPayloadTimeout
-				if action.Timeout > 0 {
-					sniffTimeout = action.Timeout
-				}
-				inputPacketConn.SetReadDeadline(time.Now().Add(sniffTimeout))
-				destination, err = inputPacketConn.ReadPacket(sniffBuffer)
-				inputPacketConn.SetReadDeadline(time.Time{})
-				close(done)
-			}()
-			select {
-			case <-done:
-			case <-ctx.Done():
-				inputPacketConn.Close()
-				fatalErr = ctx.Err()
-				return
-			}
-			if err != nil {
-				sniffBuffer.Release()
-				if !E.IsTimeout(err) {
-					fatalErr = err
-					return
-				}
-			} else {
-				if quicMoreData() {
-					err = sniff.PeekPacket(
-						ctx,
-						metadata,
-						sniffBuffer.Bytes(),
-						sniff.QUICClientHello,
-					)
-				} else {
-					err = sniff.PeekPacket(
-						ctx, metadata,
-						sniffBuffer.Bytes(),
-						packetSniffers...,
-					)
-				}
-				packetBuffer := N.NewPacketBuffer()
-				*packetBuffer = N.PacketBuffer{
-					Buffer:      sniffBuffer,
-					Destination: destination,
-				}
-				packetBuffers = append(packetBuffers, packetBuffer)
-				metadata.SnifferNames = action.SnifferNames
-				metadata.SniffError = err
-				if errors.Is(err, sniff.ErrNeedMoreData) {
-					// TODO: replace with generic message when there are more multi-packet protocols
-					r.logger.DebugContext(ctx, "attempt to sniff fragmented QUIC client hello")
-					continue
-				}
-			}
-			goto finally
-		}
-	finally:
+		packetBuffers, fatalErr = sniffPacketConnection(ctx, metadata, action, inputPacketConn, inputPacketBuffers, packetSniffers)
+		err := metadata.SniffError
 		if err == nil {
 			//goland:noinspection GoDeprecation
 			if action.OverrideDestination && M.IsDomainName(metadata.Domain) {

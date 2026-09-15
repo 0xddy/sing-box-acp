@@ -23,6 +23,7 @@ func TLSClientHello(ctx context.Context, metadata *adapter.InboundContext, reade
 	if clientHello != nil {
 		metadata.Protocol = C.ProtocolTLS
 		metadata.Domain = clientHello.ServerName
+		metadata.SniffDomain = analysisServerName(clientHello.ServerName, clientHello.Extensions)
 		return nil
 	}
 	if errors.Is(err, io.ErrUnexpectedEOF) {
