@@ -82,8 +82,12 @@ func TestStreamSniffDeadlineFailureDoesNotReadOrConsumeCache(t *testing.T) {
 	buffer := buf.NewPacket()
 	defer buffer.Release()
 	_, _ = buffer.Write([]byte("cached"))
-	err := PeekStream(context.Background(), &adapter.InboundContext{}, conn, nil, buffer, time.Second, func(context.Context, *adapter.InboundContext, io.Reader) error { return nil })
+	metadata := adapter.InboundContext{SniffDomain: "previous.example.com", SniffECHPresent: true}
+	err := PeekStream(context.Background(), &metadata, conn, nil, buffer, time.Second, func(context.Context, *adapter.InboundContext, io.Reader) error { return nil })
 	if err == nil || conn.reads != 0 || string(buffer.Bytes()) != "cached" {
 		t.Fatalf("err=%v reads=%d buffer=%q", err, conn.reads, buffer.Bytes())
+	}
+	if metadata.SniffDomain != "" || metadata.SniffECHPresent {
+		t.Fatal("failed sniff retained previous ClientHello observations")
 	}
 }

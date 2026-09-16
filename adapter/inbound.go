@@ -51,8 +51,11 @@ type InboundContext struct {
 	Network     string
 	Source      M.Socksaddr
 	Destination M.Socksaddr
-	User        string
-	Outbound    string
+	// RequestedDestination preserves the original target before router
+	// sniffing, fake-IP restoration, DNS lookup, or route overrides.
+	RequestedDestination M.Socksaddr
+	User                 string
+	Outbound             string
 
 	// power report
 
@@ -68,6 +71,10 @@ type InboundContext struct {
 	// SniffDomain is a payload-derived HTTP Host or TLS/QUIC SNI. Domain may
 	// also contain a reverse-DNS hint, so accounting must use this field.
 	SniffDomain string
+	// SniffECHPresent reports an encrypted_client_hello extension in the
+	// TLS/QUIC ClientHello, including GREASE. It does not confirm ECH use or
+	// whether SniffDomain is the actual destination or an outer public name.
+	SniffECHPresent bool
 	// SniffDestination identifies the UDP target whose payload produced the
 	// sniffed protocol/domain. A zero value means no reliable UDP attribution.
 	SniffDestination M.Socksaddr

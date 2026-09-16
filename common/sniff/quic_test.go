@@ -30,9 +30,9 @@ func TestSniffQUICChromeNew(t *testing.T) {
 	err = sniff.QUICClientHello(context.Background(), &metadata, pkt)
 	require.NoError(t, err)
 	require.Equal(t, "www.google.com", metadata.Domain)
-	// This capture carries the ECH extension. Routing keeps the visible name,
-	// while analytics cannot distinguish a real cover name from GREASE ECH.
-	require.Empty(t, metadata.SniffDomain)
+	// Preserve both observable fields; ECH and GREASE use the same extension.
+	require.Equal(t, "www.google.com", metadata.SniffDomain)
+	require.True(t, metadata.SniffECHPresent)
 }
 
 func TestSniffQUICChromium(t *testing.T) {
@@ -49,6 +49,8 @@ func TestSniffQUICChromium(t *testing.T) {
 	err = sniff.QUICClientHello(context.Background(), &metadata, pkt)
 	require.NoError(t, err)
 	require.Equal(t, metadata.Domain, "google.com")
+	require.Equal(t, "google.com", metadata.SniffDomain)
+	require.True(t, metadata.SniffECHPresent)
 }
 
 func TestSniffUQUICChrome115(t *testing.T) {

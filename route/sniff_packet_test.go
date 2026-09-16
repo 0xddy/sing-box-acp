@@ -130,16 +130,17 @@ func TestPacketSniffTargetAttributionAndUnsupportedDeadline(t *testing.T) {
 	packets, err := sniffPacketConnection(context.Background(), &metadata, &R.RuleActionSniff{}, conn, nil, []sniff.PacketSniffer{func(_ context.Context, metadata *adapter.InboundContext, _ []byte) error {
 		metadata.Domain, metadata.Protocol = "example.com", "quic"
 		metadata.SniffDomain = metadata.Domain
+		metadata.SniffECHPresent = true
 		return nil
 	}})
 	releaseSniffPackets(packets)
-	if err != nil || metadata.SniffDestination != target || metadata.Domain != "example.com" || metadata.SniffDomain != "example.com" || metadata.User != "user-1" {
+	if err != nil || metadata.SniffDestination != target || metadata.Domain != "example.com" || metadata.SniffDomain != "example.com" || !metadata.SniffECHPresent || metadata.User != "user-1" {
 		t.Fatalf("err=%v metadata=%+v", err, metadata)
 	}
 	conn.deadlineErr = os.ErrInvalid
 	conn.reads = 0
 	_, err = sniffPacketConnection(context.Background(), &metadata, &R.RuleActionSniff{}, conn, nil, nil)
-	if err != nil || conn.reads != 0 || metadata.SniffDestination.IsValid() {
+	if err != nil || conn.reads != 0 || metadata.SniffDestination.IsValid() || metadata.SniffECHPresent {
 		t.Fatal("unsupported deadline waited or retained attribution")
 	}
 }
@@ -147,13 +148,13 @@ func TestPacketSniffTargetAttributionAndUnsupportedDeadline(t *testing.T) {
 func TestPacketProtocolOnlySniffDoesNotClaimReverseDNSDomain(t *testing.T) {
 	target := M.ParseSocksaddr("192.0.2.1:123")
 	conn := &sniffTestPacketConn{targets: []M.Socksaddr{target}, data: []byte("payload"), closed: make(chan struct{})}
-	metadata := adapter.InboundContext{Destination: target, Domain: "reverse.example.com"}
+	metadata := adapter.InboundContext{Destination: target, Domain: "reverse.example.com", SniffECHPresent: true}
 	packets, err := sniffPacketConnection(context.Background(), &metadata, &R.RuleActionSniff{}, conn, nil, []sniff.PacketSniffer{func(_ context.Context, metadata *adapter.InboundContext, _ []byte) error {
 		metadata.Protocol = "ntp"
 		return nil
 	}})
 	defer releaseSniffPackets(packets)
-	if err != nil || metadata.Domain != "reverse.example.com" || metadata.SniffDomain != "" || metadata.SniffDestination != target {
+	if err != nil || metadata.Domain != "reverse.example.com" || metadata.SniffDomain != "" || metadata.SniffDestination != target || metadata.SniffECHPresent {
 		t.Fatalf("business hint changed or falsely attributed to payload: err=%v metadata=%+v", err, metadata)
 	}
 }

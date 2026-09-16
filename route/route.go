@@ -531,6 +531,9 @@ func (r *Router) preMatchFlow(ctx context.Context, metadata *adapter.InboundCont
 }
 
 func (r *Router) prepareMatchMetadata(ctx context.Context, metadata *adapter.InboundContext) error {
+	if !metadata.RequestedDestination.IsValid() {
+		metadata.RequestedDestination = metadata.Destination
+	}
 	r.searchProcessInfo(ctx, metadata)
 	if r.neighborResolver != nil && metadata.SourceMACAddress == nil && metadata.Source.Addr.IsValid() {
 		mac, macFound := r.neighborResolver.LookupMAC(metadata.Source.Addr)

@@ -316,7 +316,8 @@ func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, pack
 		return E.Cause1(ErrNeedMoreData, err)
 	}
 	metadata.Domain = fingerprint.ServerName
-	metadata.SniffDomain = analysisServerName(fingerprint.ServerName, fingerprint.Extensions)
+	metadata.SniffDomain = fingerprint.ServerName
+	metadata.SniffECHPresent = encryptedClientHelloPresent(fingerprint.Extensions)
 	for metadata.Client == "" {
 		if len(frameTypeList) == 1 {
 			metadata.Client = C.ClientFirefox

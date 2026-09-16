@@ -34,6 +34,7 @@ func sniffPacketConnection(ctx context.Context, metadata *adapter.InboundContext
 	metadata.SniffContext = nil
 	metadata.SniffDestination = M.Socksaddr{}
 	metadata.SniffDomain = ""
+	metadata.SniffECHPresent = false
 	candidate := *metadata
 	var target M.Socksaddr
 	count, size := 0, 0
@@ -81,6 +82,7 @@ func sniffPacketConnection(ctx context.Context, metadata *adapter.InboundContext
 			}
 			metadata.Protocol, metadata.Domain, metadata.Client = candidate.Protocol, candidate.Domain, candidate.Client
 			metadata.SniffDomain = candidate.SniffDomain
+			metadata.SniffECHPresent = candidate.SniffECHPresent
 			metadata.SniffDestination = target
 		}
 		return errors.Is(sniffErr, sniff.ErrNeedMoreData)

@@ -16,10 +16,11 @@ func TestPayloadDomainIsSeparateFromReverseDNSHint(t *testing.T) {
 	if metadata.Domain != "reverse.example.com" || metadata.SniffDomain != "" {
 		t.Fatal("protocol-only sniff claimed reverse DNS hint", metadata.Domain, metadata.SniffDomain)
 	}
+	metadata.SniffECHPresent = true
 	if err := HTTPHost(context.Background(), &metadata, strings.NewReader("GET / HTTP/1.1\r\nHost: visited.example.net\r\n\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	if metadata.Domain != "visited.example.net" || metadata.SniffDomain != metadata.Domain {
+	if metadata.Domain != "visited.example.net" || metadata.SniffDomain != metadata.Domain || metadata.SniffECHPresent {
 		t.Fatal("HTTP Host not marked as payload-derived", metadata.Domain, metadata.SniffDomain)
 	}
 }

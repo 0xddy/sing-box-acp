@@ -40,6 +40,7 @@ func Skip(metadata *adapter.InboundContext) bool {
 
 func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.Conn, buffers []*buf.Buffer, buffer *buf.Buffer, timeout time.Duration, sniffers ...StreamSniffer) error {
 	metadata.SniffDomain = ""
+	metadata.SniffECHPresent = false
 	if timeout == 0 {
 		timeout = C.ReadPayloadTimeout
 	}
@@ -88,6 +89,7 @@ func PeekStream(ctx context.Context, metadata *adapter.InboundContext, conn net.
 }
 
 func PeekPacket(ctx context.Context, metadata *adapter.InboundContext, packet []byte, sniffers ...PacketSniffer) error {
+	metadata.SniffECHPresent = false
 	var sniffError []error
 	for _, sniffer := range sniffers {
 		if err := ctx.Err(); err != nil {
