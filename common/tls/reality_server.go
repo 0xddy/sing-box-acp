@@ -201,7 +201,7 @@ func (c *RealityServerConfig) Server(conn net.Conn) (Conn, error) {
 func (c *RealityServerConfig) ServerHandshake(ctx context.Context, conn net.Conn) (Conn, error) {
 	tlsConn, err := utls.RealityServer(ctx, conn, c.config)
 	if err != nil {
-		return nil, err
+		return nil, normalizeRealityServerError(err)
 	}
 	return &realityConnWrapper{Conn: tlsConn}, nil
 }

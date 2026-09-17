@@ -293,7 +293,7 @@ func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 		tlsConn, err := tls.ServerHandshake(ctx, conn, h.tlsConfig)
 		if err != nil {
 			N.CloseOnHandshakeFailure(conn, onClose, err)
-			h.logger.ErrorContext(ctx, E.Cause(err, "process connection from ", metadata.Source, ": TLS handshake"))
+			logInboundConnectionError(h.logger, ctx, err, tls.IsRealityInvalidConnection(err), "process connection from ", metadata.Source, ": TLS handshake")
 			return
 		}
 		conn = tlsConn
@@ -306,7 +306,21 @@ func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 	err := current.service.NewConnection(adapter.WithContext(ctx, &metadata), conn, metadata.Source, onClose)
 	if err != nil {
 		N.CloseOnHandshakeFailure(conn, onClose, err)
-		h.logger.ErrorContext(ctx, E.Cause(err, "process connection from ", metadata.Source))
+		logInboundConnectionError(h.logger, ctx, err, E.IsClosedOrCanceled(err), "process connection from ", metadata.Source)
+	}
+}
+
+type inboundConnectionErrorLogger interface {
+	DebugContext(ctx context.Context, args ...any)
+	ErrorContext(ctx context.Context, args ...any)
+}
+
+func logInboundConnectionError(logger inboundConnectionErrorLogger, ctx context.Context, err error, expected bool, message ...any) {
+	loggedError := E.Cause(err, message...)
+	if expected {
+		logger.DebugContext(ctx, loggedError)
+	} else {
+		logger.ErrorContext(ctx, loggedError)
 	}
 }
 
