@@ -1,7 +1,7 @@
 # ACP sing-quic changes
 
 This directory is based on `github.com/sagernet/sing-quic` tag
-`v0.7.0-beta.4` (commit `4ab2eceaac81`) and remains under the upstream
+`v0.7.0` (commit `4ab2eceaac81`, the same source as `v0.7.0-beta.4`) and remains under the upstream
 license in `LICENSE`.
 
 ACP adds concurrency-safe Hysteria2 authentication snapshots and targeted
