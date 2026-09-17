@@ -69,6 +69,12 @@ func inspectRouteRuleAction(ctx context.Context, content []byte) (string, RouteA
 	if err != nil {
 		return "", RouteActionOptions{}, err
 	}
+	// Only the implicit route action needs its options inspected to distinguish
+	// an empty nested match from a nested action. Explicit actions are decoded
+	// later with their own option types (direct uses a duration fallback_delay).
+	if rawAction.Action != "" {
+		return rawAction.Action, RouteActionOptions{}, nil
+	}
 	var routeOptions RouteActionOptions
 	err = json.UnmarshalContext(ctx, content, &routeOptions)
 	if err != nil {
