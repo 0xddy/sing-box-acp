@@ -300,6 +300,14 @@ func (h *Inbound) InterfaceUpdated(ctx context.Context) {
 	h.service.Reset()
 }
 
+// RuntimeError exposes a confirmed listener failure to the runtime owner.
+func (h *Inbound) RuntimeError() error {
+	if h.service == nil {
+		return nil
+	}
+	return h.service.RuntimeError()
+}
+
 func (h *Inbound) Close() error {
 	h.cancelService()
 	return common.Close(

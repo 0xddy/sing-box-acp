@@ -82,6 +82,10 @@ type authenticatedUser[U comparable] struct {
 	identity U
 }
 
+type listenerRuntimeError struct {
+	err error
+}
+
 type managedSession[U comparable] interface {
 	authenticatedIdentity() (U, bool)
 	closeWithError(err error) bool
@@ -106,6 +110,8 @@ type Service[U comparable] struct {
 	handler               ServerHandler
 	masqueradeHandler     http.Handler
 	quicListener          io.Closer
+	closed                atomic.Bool
+	runtimeError          atomic.Pointer[listenerRuntimeError]
 	bbrProfile            congestion_meta2.Profile
 	realmServer           *realm.Server
 	sessionAccess         sync.Mutex
@@ -302,11 +308,25 @@ func (s *Service[U]) startWithRealm(conn net.PacketConn) error {
 }
 
 func (s *Service[U]) Close() error {
+	s.closed.Store(true)
 	var realmErr error
 	if s.realmServer != nil {
 		realmErr = s.realmServer.Close()
 	}
 	return E.Errors(realmErr, common.Close(s.quicListener))
+}
+
+// RuntimeError reports a terminal accept failure after a successful Start.
+// The UDP socket may remain bound after the QUIC transport stops, so checking
+// only the port cannot detect this failure. Intentional shutdown is healthy.
+func (s *Service[U]) RuntimeError() error {
+	if s.closed.Load() || s.ctx.Err() != nil {
+		return nil
+	}
+	if failure := s.runtimeError.Load(); failure != nil {
+		return failure.err
+	}
+	return nil
 }
 
 func (s *Service[U]) Reset() {
@@ -319,9 +339,10 @@ func (s *Service[U]) loopConnections(listener qtls.Listener) {
 	for {
 		connection, err := listener.Accept(s.ctx)
 		if err != nil {
-			if E.IsClosedOrCanceled(err) || errors.Is(err, quic.ErrServerClosed) {
+			if s.closed.Load() || s.ctx.Err() != nil {
 				s.logger.Debug(E.Cause(err, "listener closed"))
 			} else {
+				s.runtimeError.Store(&listenerRuntimeError{err: err})
 				s.logger.Error(E.Cause(err, "listener closed"))
 			}
 			return
