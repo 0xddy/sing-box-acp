@@ -88,7 +88,7 @@ func TestTLSAuthenticationWebFallbackAndRevocation(t *testing.T) {
 	server, err := NewInbound(context.Background(), router, log.NewNOPFactory().Logger(), "anytls", option.AnyTLSInboundOptions{
 		ListenOptions:              option.ListenOptions{Listen: common.Ptr(badoption.Addr(netip.MustParseAddr("127.0.0.1")))},
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{TLS: &option.InboundTLSOptions{Enabled: true, ALPN: []string{"h2", "http/1.1"}, Certificate: []string{string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Certificate[0]}))}, Key: []string{string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}))}}},
-		Users:                      []option.AnyTLSUser{{Name: "user-1", Password: "first"}, {Name: "user-2", Password: "second"}}, Web: &option.WebOptions{Type: "static", Title: "Website"},
+		Users:                      []option.AnyTLSUser{{Name: "user-1", Password: "first"}, {Name: "user-2", Password: "second"}}, Web: &option.WebOptions{Type: "static", Content: "<h1>Website</h1>"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -184,11 +184,15 @@ func TestTLSAuthenticationWebFallbackAndRevocation(t *testing.T) {
 				}
 			}
 			defer response.Body.Close()
-			if _, err = io.Copy(io.Discard, response.Body); err != nil {
+			body, err := io.ReadAll(response.Body)
+			if err != nil {
 				t.Fatal(err)
 			}
 			if response.StatusCode != tc.status {
 				t.Fatal(response.StatusCode)
+			}
+			if tc.status == http.StatusOK && string(body) != "<h1>Website</h1>" {
+				t.Fatalf("HTML response changed: %q", body)
 			}
 		})
 	}

@@ -10,18 +10,16 @@ import (
 // WebOptions contains only serializable website configuration. It is shared
 // with the panel's configuration-only support module, never the HTTP runtime.
 type WebOptions struct {
-	Type        string `json:"type"`
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	Body        string `json:"body,omitempty"`
-	URL         string `json:"url,omitempty"`
+	Type    string `json:"type"`
+	Content string `json:"content,omitempty"`
+	URL     string `json:"url,omitempty"`
 }
 
 func (o WebOptions) Validate() error {
 	switch o.Type {
 	case "static":
-		if strings.TrimSpace(o.Title) == "" || len(o.Title) > 256 || len(o.Description) > 2048 || len(o.Body) > 65536 {
-			return fmt.Errorf("static website requires a title (at most 256 bytes), description at most 2048 bytes and body at most 65536 bytes")
+		if strings.TrimSpace(o.Content) == "" || len(o.Content) > 65536 {
+			return fmt.Errorf("static response requires content (at most 65536 bytes)")
 		}
 		if o.URL != "" {
 			return fmt.Errorf("static website does not accept url")
@@ -37,7 +35,7 @@ func (o WebOptions) Validate() error {
 				return fmt.Errorf("website URL port must be between 1 and 65535")
 			}
 		}
-		if o.Title != "" || o.Description != "" || o.Body != "" {
+		if o.Content != "" {
 			return fmt.Errorf("proxy website does not accept static content")
 		}
 	default:

@@ -12,7 +12,8 @@ import (
 )
 
 func TestStaticHTTPBehavior(t *testing.T) {
-	site, err := New(option.WebOptions{Type: "static", Title: "Example", Description: "A website", Body: "<script>escaped</script>"})
+	const content = " \n<!doctype html><html><head><style>body { color: navy; }</style></head><body><h1>自定义页面</h1><script>document.title = 'Example';</script></body></html>\n "
+	site, err := New(option.WebOptions{Type: "static", Content: content})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,15 +27,12 @@ func TestStaticHTTPBehavior(t *testing.T) {
 		site.ServeHTTP(w, r)
 		return w
 	}
-	for _, path := range []string{"/", "/about", "/assets/site.css", "/assets/landscape.svg", "/favicon.svg"} {
-		if got := request("GET", path, nil); got.Code != 200 || got.Body.Len() == 0 {
+	for _, path := range []string{"/", "/about", "/nested/page?query=1", "/favicon.svg"} {
+		if got := request("GET", path, nil); got.Code != 200 || got.Body.String() != content || got.Header().Get("Content-Type") != "text/html; charset=utf-8" {
 			t.Fatalf("%s: %d", path, got.Code)
 		}
 	}
 	page := request("GET", "/about", nil)
-	if strings.Contains(page.Body.String(), "<script>") || !strings.Contains(page.Body.String(), "&lt;script&gt;") {
-		t.Fatal("template did not escape content")
-	}
 	if got := request("HEAD", "/about", nil); got.Code != 200 || got.Body.Len() != 0 || got.Header().Get("Content-Length") != page.Header().Get("Content-Length") {
 		t.Fatal("HEAD representation differs")
 	}
@@ -57,8 +55,8 @@ func TestStaticHTTPBehavior(t *testing.T) {
 	if string(decoded) != page.Body.String() || encoded.Header().Get("ETag") == page.Header().Get("ETag") {
 		t.Fatal("gzip representation failed")
 	}
-	if request("GET", "/missing", nil).Code != 404 || request("POST", "/", nil).Code != 405 {
-		t.Fatal("status semantics failed")
+	if got := request("POST", "/", nil); got.Code != 405 || got.Header().Get("Allow") != "GET, HEAD" {
+		t.Fatal("method semantics failed")
 	}
 	if request("GET", "/", map[string]string{"Accept-Encoding": "gzip;q=0,*;q=1"}).Header().Get("Content-Encoding") != "" {
 		t.Fatal("gzip exclusion ignored")
