@@ -9,13 +9,13 @@
 | 组件 | 基线 |
 | --- | --- |
 | sing-box 上游 | `v1.14.1`（`1ac1a339cb12`） |
-| sing-box-acp | `acp-user-hot-update/v1.14.1` |
+| sing-box-acp | `main` |
 | 内嵌 sing-quic 上游 | `v0.7.0` |
 | Go | `1.25.5` 或更高兼容版本 |
 
 根模块通过 `replace` 将 `github.com/sagernet/sing-quic` 指向 [`third_party/sing-quic-acp`](third_party/sing-quic-acp)。该本地模块包含 Hysteria2 会话撤销所需的定制实现，集成时必须与主模块一起保留。
 
-上一个稳定基线保留在 `acp-user-hot-update/v1.14.0`。两个版本分别维护在独立分支，调用方切换分支或固定提交即可回退，不需要反向合并升级提交。
+仓库只维护 `main` 主分支。调用方固定经过验证的提交，历史基线通过提交回退，例如 `v1.14.0` 对应 `ebd3b1cd3e720e1cac53edcdf8bc15d4d329599e`。
 
 ## 库能力
 
