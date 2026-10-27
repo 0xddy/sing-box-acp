@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/fswatch"
@@ -93,6 +94,7 @@ type STDServerConfig struct {
 	ctx                   context.Context
 	access                sync.RWMutex
 	config                *tls.Config
+	inlineCertificate     *atomic.Pointer[tls.Certificate]
 	handshakeTimeout      time.Duration
 	logger                log.Logger
 	certificateProvider   managedCertificateProvider
@@ -179,8 +181,9 @@ func (c *STDServerConfig) Server(conn net.Conn) (Conn, error) {
 
 func (c *STDServerConfig) Clone() Config {
 	return &STDServerConfig{
-		config:           c.config.Clone(),
-		handshakeTimeout: c.handshakeTimeout,
+		config:            c.config.Clone(),
+		handshakeTimeout:  c.handshakeTimeout,
+		inlineCertificate: c.inlineCertificate,
 	}
 }
 
@@ -334,6 +337,7 @@ func NewSTDServer(ctx context.Context, logger log.ContextLogger, options option.
 		return nil, E.New("certificate_provider and acme are mutually exclusive")
 	}
 	var tlsConfig *tls.Config
+	var inlineCertificate *atomic.Pointer[tls.Certificate]
 	var certificateProvider managedCertificateProvider
 	var acmeService adapter.SimpleLifecycle
 	var err error
@@ -440,7 +444,16 @@ func NewSTDServer(ctx context.Context, logger log.ContextLogger, options option.
 			if err != nil {
 				return nil, E.Cause(err, "parse x509 key pair")
 			}
-			tlsConfig.Certificates = []tls.Certificate{keyPair}
+			if len(options.Certificate) > 0 && len(options.Key) > 0 && options.CertificatePath == "" && options.KeyPath == "" {
+				inlineCertificate = new(atomic.Pointer[tls.Certificate])
+				inlineCertificate.Store(&keyPair)
+				// QUIC and cloned configs retain this callback across updates.
+				tlsConfig.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+					return inlineCertificate.Load(), nil
+				}
+			} else {
+				tlsConfig.Certificates = []tls.Certificate{keyPair}
+			}
 		}
 	}
 	if len(options.ClientCertificate) > 0 || len(options.ClientCertificatePath) > 0 {
@@ -497,6 +510,7 @@ func NewSTDServer(ctx context.Context, logger log.ContextLogger, options option.
 	serverConfig := &STDServerConfig{
 		ctx:                   ctx,
 		config:                tlsConfig,
+		inlineCertificate:     inlineCertificate,
 		handshakeTimeout:      handshakeTimeout,
 		logger:                logger,
 		certificateProvider:   certificateProvider,
