@@ -1,6 +1,8 @@
 package webcontent
 
 import (
+	"errors"
+	"github.com/sagernet/sing-box/common/webprofile"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -32,6 +34,9 @@ func newProxy(options option.WebOptions) (*Site, error) {
 			r.SetXForwarded()
 		},
 		ModifyResponse: func(response *http.Response) error {
+			// This listener is the public HTTP server. Do not advertise the
+			// backend's server software or transports the listener cannot serve.
+			response.Header.Set("Server", webprofile.Server)
 			// The public listener supports TCP HTTP/1.1 and HTTP/2 only.
 			response.Header.Del("Alt-Svc")
 			if raw := response.Header.Get("Location"); raw != "" {
@@ -95,18 +100,41 @@ func newProxy(options option.WebOptions) (*Site, error) {
 			}
 			return nil
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			apacheError(w, r, proxyErrorStatus(err))
 		},
 	}
 	return &Site{transport: transport, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodConnect {
+		w.Header().Set("Server", webprofile.Server)
+		if r.Method == http.MethodOptions && r.URL.Path == "*" {
+			w.Header().Set("Content-Length", "0")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method == http.MethodConnect || r.Method == http.MethodTrace {
 			w.Header().Set("Allow", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			if r.Method == http.MethodTrace {
+				w.Header().Set("Allow", "")
+			}
+			apacheError(w, r, http.StatusMethodNotAllowed)
 			return
 		}
 		proxy.ServeHTTP(w, r)
 	})}, nil
+}
+
+func proxyErrorStatus(err error) int {
+	// Like mod_proxy, failure to establish the backend connection is 503;
+	// timing out while waiting for the backend response is 504.
+	var operation *net.OpError
+	if errors.As(err, &operation) && operation.Op == "dial" {
+		return http.StatusServiceUnavailable
+	}
+	var timeout net.Error
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return http.StatusGatewayTimeout
+	}
+	return http.StatusBadGateway
 }
 
 func sameOrigin(left, right *url.URL) bool {

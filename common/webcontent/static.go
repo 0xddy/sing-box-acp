@@ -3,8 +3,8 @@ package webcontent
 import (
 	"bytes"
 	"compress/gzip"
-	"crypto/sha256"
 	"fmt"
+	"github.com/sagernet/sing-box/common/webprofile"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,33 +19,87 @@ type resource struct {
 }
 
 func newStatic(options option.WebOptions) (*Site, error) {
-	file, err := makeResource([]byte(options.Content), "text/html; charset=utf-8")
+	modifiedAt := time.Now().UTC()
+	file, err := makeResource([]byte(options.Content), "text/html; charset=UTF-8", modifiedAt)
 	if err != nil {
 		return nil, err
 	}
-	modifiedAt := time.Now().UTC().Truncate(time.Second)
 	return &Site{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		w.Header().Set("Server", webprofile.Server)
+		if r.Method == http.MethodOptions {
+			if r.URL.Path != "*" {
+				w.Header().Set("Allow", staticAllow)
+				w.Header().Set("Content-Type", "text/html; charset=UTF-8")
+			}
+			w.Header().Set("Content-Length", "0")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPost {
+			w.Header().Set("Allow", staticAllow)
+			if r.Method == http.MethodTrace {
+				w.Header().Set("Allow", "")
+			}
+			if !knownMethod(r.Method) {
+				apacheError(w, r, http.StatusNotImplemented)
+				return
+			}
+			apacheError(w, r, http.StatusMethodNotAllowed)
 			return
 		}
 		w.Header().Set("Content-Type", file.contentType)
-		w.Header().Set("Cache-Control", "public, max-age=300")
-		w.Header().Set("Vary", "Accept-Encoding")
 		data, etag := file.data, file.etag
-		if r.Header.Get("Range") == "" && acceptsGzip(r.Header.Get("Accept-Encoding")) {
-			w.Header().Set("Content-Encoding", "gzip")
-			data, etag = file.compressed, file.gzipETag
+		// mod_deflate skips known bodies no larger than its 68-byte overhead.
+		if len(data) > 68 {
+			w.Header().Set("Vary", "Accept-Encoding")
+			if r.Header.Get("Range") == "" && acceptsGzip(r.Header.Get("Accept-Encoding")) {
+				w.Header().Set("Content-Encoding", "gzip")
+				data, etag = file.compressed, file.gzipETag
+			}
 		}
 		w.Header().Set("ETag", etag)
-		http.ServeContent(w, r, r.URL.Path, modifiedAt, bytes.NewReader(data))
+		if value := r.Header.Get("Range"); value != "" && !validByteRanges(value) {
+			// Apache ignores syntactically invalid ranges, reserving 416 for
+			// valid ranges that do not overlap the selected representation.
+			r = r.Clone(r.Context())
+			r.Header.Del("Range")
+		}
+		http.ServeContent(&contentResponseWriter{ResponseWriter: w, request: r}, r, r.URL.Path, modifiedAt, bytes.NewReader(data))
 	})}, nil
 }
 
-func makeResource(data []byte, contentType string) (resource, error) {
+func validByteRanges(value string) bool {
+	if !strings.HasPrefix(value, "bytes=") {
+		return false
+	}
+	for _, item := range strings.Split(strings.TrimPrefix(value, "bytes="), ",") {
+		start, end, ok := strings.Cut(strings.TrimSpace(item), "-")
+		if !ok || (start == "" && end == "") {
+			return false
+		}
+		var first, last uint64
+		var err error
+		if start != "" {
+			first, err = strconv.ParseUint(start, 10, 63)
+			if err != nil {
+				return false
+			}
+		}
+		if end != "" {
+			last, err = strconv.ParseUint(end, 10, 63)
+			if err != nil || (start != "" && last < first) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func makeResource(data []byte, contentType string, modifiedAt time.Time) (resource, error) {
 	var compressed bytes.Buffer
 	writer := gzip.NewWriter(&compressed)
+	// mod_deflate emits a zero timestamp and Unix OS byte in its gzip header.
+	writer.Header.OS = 3
 	if _, err := writer.Write(data); err != nil {
 		// Closing after a failed write only releases compression resources.
 		_ = writer.Close()
@@ -55,7 +109,10 @@ func makeResource(data []byte, contentType string) (resource, error) {
 		return resource{}, err
 	}
 	encoded := compressed.Bytes()
-	return resource{data, encoded, contentType, fmt.Sprintf(`"%x"`, sha256.Sum256(data)), fmt.Sprintf(`"%x"`, sha256.Sum256(encoded))}, nil
+	// FileETag MTime Size serializes size followed by APR's microsecond mtime.
+	// The virtual file is replaced whenever this website configuration changes.
+	etag := fmt.Sprintf("%x-%x", len(data), modifiedAt.UnixMicro())
+	return resource{data, encoded, contentType, `"` + etag + `"`, `"` + etag + `-gzip"`}, nil
 }
 
 func acceptsGzip(value string) bool {

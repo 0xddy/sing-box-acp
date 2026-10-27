@@ -9,8 +9,8 @@ import (
 	"net"
 	"net/http"
 	"sync"
-	"time"
 
+	"github.com/sagernet/sing-box/common/webprofile"
 	"github.com/sagernet/sing/common/logger"
 	"golang.org/x/net/http2"
 )
@@ -31,6 +31,7 @@ type Server struct {
 }
 
 type stateKey struct{}
+type connectionKey struct{}
 
 func New(handler http.Handler, logger logger.ContextLogger) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -40,17 +41,33 @@ func New(handler http.Handler, logger logger.ContextLogger) *Server {
 			if state, ok := r.Context().Value(stateKey{}).(tls.ConnectionState); ok {
 				r.TLS = &state
 			}
+			if c, ok := r.Context().Value(connectionKey{}).(*connection); ok && c.http1 != nil {
+				if c.http1.begin(r) {
+					w.Header().Set("Connection", "close")
+				}
+			}
+			if status, note := validateWebsiteRequest(r); status != 0 {
+				if r.ProtoMajor == 1 {
+					w.Header().Set("Connection", "close")
+				}
+				webprofile.WriteError(w, r, status, note)
+				return
+			}
 			handler.ServeHTTP(w, r)
 		}),
-		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
-		MaxHeaderBytes: 1 << 20,
-		BaseContext:    func(net.Listener) context.Context { return ctx },
+		ReadHeaderTimeout: profileHeaderTimeout, ReadTimeout: profileIOTimeout,
+		WriteTimeout: profileIOTimeout, IdleTimeout: profileIdleTimeout,
+		MaxHeaderBytes: maxRequestHeaderBytes,
+		// Let the website answer OPTIONS * with its own Allow and Server
+		// headers instead of net/http's built-in empty response.
+		DisableGeneralOptionsHandler: true,
+		BaseContext:                  func(net.Listener) context.Context { return ctx },
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			return context.WithValue(ctx, stateKey{}, c.(*connection).state)
+			ctx = context.WithValue(ctx, stateKey{}, c.(*connection).state)
+			return context.WithValue(ctx, connectionKey{}, c.(*connection))
 		},
 	}
-	s.h2 = &http2.Server{MaxConcurrentStreams: 128, IdleTimeout: 60 * time.Second, ReadIdleTimeout: 30 * time.Second, PingTimeout: 10 * time.Second, WriteByteTimeout: 30 * time.Second}
+	s.h2 = newHTTP2Server()
 	return s
 }
 
@@ -94,6 +111,12 @@ func (s *Server) Serve(conn net.Conn, state tls.ConnectionState, onClose func(er
 		return errors.New("web connection limit reached")
 	}
 	c := &connection{Conn: conn, state: state, owner: s, onClose: onClose}
+	if state.NegotiatedProtocol == "h2" {
+		c.Conn = &http2Profile{Conn: conn}
+	} else {
+		c.http1 = newHTTP1Profile(conn)
+		c.Conn = c.http1
+	}
 	s.connections[c] = struct{}{}
 	if state.NegotiatedProtocol == "h2" {
 		s.wg.Add(1)
@@ -139,6 +162,7 @@ func (s *Server) Close() error {
 
 type connection struct {
 	net.Conn
+	http1   *http1Profile
 	state   tls.ConnectionState
 	owner   *Server
 	onClose func(error)

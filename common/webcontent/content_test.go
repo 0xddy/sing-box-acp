@@ -28,7 +28,7 @@ func TestStaticHTTPBehavior(t *testing.T) {
 		return w
 	}
 	for _, path := range []string{"/", "/about", "/nested/page?query=1", "/favicon.svg"} {
-		if got := request("GET", path, nil); got.Code != 200 || got.Body.String() != content || got.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		if got := request("GET", path, nil); got.Code != 200 || got.Body.String() != content || got.Header().Get("Content-Type") != "text/html; charset=UTF-8" {
 			t.Fatalf("%s: %d", path, got.Code)
 		}
 	}
@@ -55,7 +55,7 @@ func TestStaticHTTPBehavior(t *testing.T) {
 	if string(decoded) != page.Body.String() || encoded.Header().Get("ETag") == page.Header().Get("ETag") {
 		t.Fatal("gzip representation failed")
 	}
-	if got := request("POST", "/", nil); got.Code != 405 || got.Header().Get("Allow") != "GET, HEAD" {
+	if got := request("POST", "/", nil); got.Code != 200 || got.Body.String() != content {
 		t.Fatal("method semantics failed")
 	}
 	if request("GET", "/", map[string]string{"Accept-Encoding": "gzip;q=0,*;q=1"}).Header().Get("Content-Encoding") != "" {
@@ -111,7 +111,7 @@ func TestProxyFixedTargetAndResponses(t *testing.T) {
 	upstream.Close()
 	w = httptest.NewRecorder()
 	site.ServeHTTP(w, r)
-	if w.Code != 502 {
+	if w.Code != 503 {
 		t.Fatalf("upstream failure: %d", w.Code)
 	}
 }

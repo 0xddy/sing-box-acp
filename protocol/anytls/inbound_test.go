@@ -149,7 +149,13 @@ func TestTLSAuthenticationWebFallbackAndRevocation(t *testing.T) {
 		status              int
 	}{
 		{"short-http-without-alpn", "", "GET / HTTP/1.0\r\n\r\n", 200},
-		{"extension-method", "http/1.1", "BREW / HTTP/1.0\r\n\r\n", 405},
+		{"extension-method", "http/1.1", "BREW / HTTP/1.0\r\n\r\n", 501},
+		{"trace-disabled", "http/1.1", "TRACE / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n", 405},
+		{"options-star", "http/1.1", "OPTIONS * HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n", 200},
+		{"text-http20", "http/1.1", "GET / HTTP/2.0\r\nHost: example.com\r\nConnection: close\r\n\r\n", 200},
+		{"text-http30", "http/1.1", "GET / HTTP/3.0\r\nHost: example.com\r\nConnection: close\r\n\r\n", 200},
+		{"expectation-failed", "http/1.1", "GET / HTTP/1.1\r\nHost: example.com\r\nExpect: unsupported\r\nConnection: close\r\n\r\n", 417},
+		{"unsatisfied-range", "http/1.1", "GET / HTTP/1.1\r\nHost: example.com\r\nRange: bytes=1000-\r\nConnection: close\r\n\r\n", 416},
 		{"http2-preface", "h2", "", 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -171,6 +177,29 @@ func TestTLSAuthenticationWebFallbackAndRevocation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				for _, probe := range []struct {
+					method string
+					status int
+				}{{"HEAD", 200}, {"OPTIONS", 200}, {"POST", 200}, {"TRACE", 405}, {"BREW", 501}} {
+					request, err := http.NewRequest(probe.method, "https://example.com/", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					result, err := cc.RoundTrip(request)
+					if err != nil {
+						t.Fatal(err)
+					}
+					func() {
+						defer result.Body.Close()
+						body, err := io.ReadAll(result.Body)
+						if err != nil || result.StatusCode != probe.status || result.Header.Get("Server") != "Apache" {
+							t.Fatalf("HTTP/2 %s profile: status=%d headers=%v error=%v", probe.method, result.StatusCode, result.Header, err)
+						}
+						if (probe.method == "HEAD" || probe.method == "OPTIONS") && len(body) != 0 {
+							t.Fatalf("HTTP/2 %s contains a body", probe.method)
+						}
+					}()
+				}
 			} else {
 				// A complete HTTP/1.0 request shorter than the AnyTLS auth digest.
 				for _, b := range []byte(tc.request) {
@@ -191,7 +220,14 @@ func TestTLSAuthenticationWebFallbackAndRevocation(t *testing.T) {
 			if response.StatusCode != tc.status {
 				t.Fatal(response.StatusCode)
 			}
-			if tc.status == http.StatusOK && string(body) != "<h1>Website</h1>" {
+			if response.Header.Get("Server") != "Apache" {
+				t.Fatal("website server profile missing", response.Header)
+			}
+			if tc.name == "options-star" {
+				if len(body) != 0 || response.Header.Get("Allow") != "" {
+					t.Fatal("OPTIONS * bypassed website profile", response.Header)
+				}
+			} else if tc.status == http.StatusOK && string(body) != "<h1>Website</h1>" {
 				t.Fatalf("HTML response changed: %q", body)
 			}
 		})
