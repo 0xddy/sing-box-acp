@@ -76,16 +76,30 @@ func NewService(o ServiceOptions) (*Service, error) {
 	return s, nil
 }
 
-func (s *Service) UpdateUsers(users []User) error {
+func userTable(users []User) (map[[16]byte]User, error) {
 	table := make(map[[16]byte]User, len(users))
 	for _, u := range users {
 		if u.Password == "" {
-			return errors.New("missing Juicity password")
+			return nil, errors.New("missing Juicity password")
 		}
 		if _, ok := table[u.UUID]; ok {
-			return errors.New("duplicate Juicity UUID")
+			return nil, errors.New("duplicate Juicity UUID")
 		}
 		table[u.UUID] = u
+	}
+	return table, nil
+}
+
+// ValidateUsers checks a candidate without publishing it or revoking sessions.
+func ValidateUsers(users []User) error {
+	_, err := userTable(users)
+	return err
+}
+
+func (s *Service) UpdateUsers(users []User) error {
+	table, err := userTable(users)
+	if err != nil {
+		return err
 	}
 	s.mu.Lock()
 	s.users.Store(&table)

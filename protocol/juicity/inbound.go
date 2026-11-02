@@ -2,6 +2,7 @@ package juicity
 
 import (
 	"context"
+	stdtls "crypto/tls"
 	"net"
 	"time"
 
@@ -65,19 +66,40 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	return h, nil
 }
 
-func (h *Inbound) UpdateUsers(users []option.JuicityUser) error {
+func parseUsers(users []option.JuicityUser) ([]J.User, error) {
 	table := make([]J.User, 0, len(users))
 	for i, u := range users {
 		id, err := uuid.FromString(u.UUID)
 		if err != nil {
-			return E.Cause(err, "invalid uuid for user ", i)
+			return nil, E.New("invalid uuid for user ", i)
 		}
 		table = append(table, J.User{Name: u.Name, UUID: id, Password: u.Password})
+	}
+	return table, nil
+}
+
+// ValidateUsers allows a caller to prepare all user changes before applying any of them.
+func ValidateUsers(users []option.JuicityUser) error {
+	table, err := parseUsers(users)
+	if err != nil {
+		return err
+	}
+	return J.ValidateUsers(table)
+}
+
+func (h *Inbound) UpdateUsers(users []option.JuicityUser) error {
+	table, err := parseUsers(users)
+	if err != nil {
+		return err
 	}
 	return h.service.UpdateUsers(table)
 }
 
 func (h *Inbound) CloseUserSessions(name string) int { return h.service.CloseUserSessions(name) }
+
+func (h *Inbound) UpdateTLSCertificate(certificate *stdtls.Certificate) error {
+	return tls.UpdateCertificate(h.tls, certificate)
+}
 
 func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
