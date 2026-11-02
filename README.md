@@ -4,6 +4,8 @@
 
 本项目不是 SagerNet 官方发行版，也不代表或隶属于 SagerNet。仓库保留原项目的模块路径 `github.com/sagernet/sing-box`，以兼容现有 sing-box 包引用。
 
+Mieru 的入站和出站直接注册到普通构建。嵌入此内核的 Go 主模块需要将 `github.com/enfein/mieru/v3` 替换为本内核的 `third_party/mieru-acp`，以启用凭据撤权。[依赖基线与补丁](third_party/mieru-acp/ACP_CHANGES.md)
+
 ## 版本基线
 
 | 组件 | 基线 |
@@ -11,6 +13,7 @@
 | sing-box 上游 | `v1.14.4`（`c005f35300ce`） |
 | sing-box-acp | `main` |
 | 内嵌 sing-quic 上游 | `v0.7.2-0.20261020082049-7e0a5869a5f4` |
+| 内嵌 Mieru 上游 | `v3.39.0`（`bcd14b88d0fb`） |
 | Go | `1.25.5` 或更高兼容版本 |
 
 根模块通过 `replace` 将 `github.com/sagernet/sing-quic` 指向 [`third_party/sing-quic-acp`](third_party/sing-quic-acp)。该本地模块包含 Hysteria2 会话撤销所需的定制实现，集成时必须与主模块一起保留。

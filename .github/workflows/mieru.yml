@@ -1,0 +1,43 @@
+name: Mieru interoperability
+on:
+  push:
+    paths: &paths
+      - 'protocol/mieru/**'
+      - 'third_party/mieru-acp/**'
+      - 'option/mieru.go'
+      - 'include/registry.go'
+      - 'constant/proxy.go'
+      - 'test/mieru/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/mieru.yml'
+  pull_request:
+    paths: *paths
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: enfein/mieru
+          ref: bcd14b88d0fb7e7707bb80e5d7f6c33675d26c06
+          path: .mieru-reference
+          persist-credentials: false
+      - name: Build unmodified official binaries
+        run: go -C .mieru-reference build -o "$RUNNER_TEMP/" ./cmd/mieru ./cmd/mita
+      - name: Verify credential lifecycle
+        run: |
+          go -C third_party/mieru-acp test -race ./apis/... ./pkg/protocol/...
+          go test -race -mod=readonly ./protocol/mieru
+      - name: Check both builds and run bidirectional interoperability
+        run: |
+          go build -mod=readonly -o "$RUNNER_TEMP/sing-box" ./cmd/sing-box
+          go build -mod=readonly -tags 'with_utls with_quic' -o "$RUNNER_TEMP/sing-box-quic" ./cmd/sing-box
+          python3 test/mieru/interop.py --box "$RUNNER_TEMP/sing-box" --mieru "$RUNNER_TEMP/mieru" --mita "$RUNNER_TEMP/mita"

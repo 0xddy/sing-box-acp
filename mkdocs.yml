@@ -173,6 +173,7 @@ nav:
           - VLESS: configuration/inbound/vless.md
           - TUIC: configuration/inbound/tuic.md
           - Juicity: configuration/inbound/juicity.md
+          - Mieru: configuration/inbound/mieru.md
           - Hysteria2: configuration/inbound/hysteria2.md
           - AnyTLS: configuration/inbound/anytls.md
           - Snell: configuration/inbound/snell.md
@@ -197,6 +198,7 @@ nav:
           - VLESS: configuration/outbound/vless.md
           - TUIC: configuration/outbound/tuic.md
           - Juicity: configuration/outbound/juicity.md
+          - Mieru: configuration/outbound/mieru.md
           - Hysteria2: configuration/outbound/hysteria2.md
           - AnyTLS: configuration/outbound/anytls.md
           - Snell: configuration/outbound/snell.md

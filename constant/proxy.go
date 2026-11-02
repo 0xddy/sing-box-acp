@@ -25,6 +25,7 @@ const (
 	TypeShadowsocksR       = "shadowsocksr"
 	TypeVLESS              = "vless"
 	TypeTUIC               = "tuic"
+	TypeMieru              = "mieru"
 	TypeJuicity            = "juicity"
 	TypeHysteria2          = "hysteria2"
 	TypeOpenConnect        = "openconnect"
@@ -99,6 +100,8 @@ func ProxyDisplayName(proxyType string) string {
 		return "VLESS"
 	case TypeTUIC:
 		return "TUIC"
+	case TypeMieru:
+		return "Mieru"
 	case TypeJuicity:
 		return "Juicity"
 	case TypeHysteria2:
