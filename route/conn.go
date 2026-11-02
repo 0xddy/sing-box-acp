@@ -295,8 +295,12 @@ func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn,
 	if err != nil {
 		common.Close(source, destination)
 	} else {
-		destinationWriter, _ := N.UnwrapCountWriter(destination, nil)
-		duplexDst, isDuplex := N.UnwrapWriter(destinationWriter).(N.WriteCloser)
+		// A tracker can expose CloseWrite even when its inner accounting writer cannot.
+		duplexDst, isDuplex := destination.(N.WriteCloser)
+		if !isDuplex {
+			destinationWriter, _ := N.UnwrapCountWriter(destination, nil)
+			duplexDst, isDuplex = N.UnwrapWriter(destinationWriter).(N.WriteCloser)
+		}
 		if isDuplex {
 			err = duplexDst.CloseWrite()
 			if err != nil {

@@ -71,7 +71,7 @@ func inspectRouteRuleAction(ctx context.Context, content []byte) (string, RouteA
 	}
 	// Only the implicit route action needs its options inspected to distinguish
 	// an empty nested match from a nested action. Explicit actions are decoded
-	// later with their own option types (direct uses a duration fallback_delay).
+	// later with their own option types.
 	if rawAction.Action != "" {
 		return rawAction.Action, RouteActionOptions{}, nil
 	}

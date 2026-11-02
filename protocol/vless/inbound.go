@@ -243,7 +243,6 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
-	scope.Add(func() error { return common.Close(h.auth.Load().service) })
 	if h.tlsConfig != nil {
 		err := h.tlsConfig.Start()
 		if err != nil {
