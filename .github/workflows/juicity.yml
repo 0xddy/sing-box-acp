@@ -1,0 +1,51 @@
+name: Juicity interoperability
+
+on:
+  push:
+    paths: &juicity_paths
+      - 'protocol/juicity/**'
+      - 'third_party/sing-quic-acp/**'
+      - 'option/juicity.go'
+      - 'constant/proxy.go'
+      - 'include/quic*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/juicity.yml'
+  pull_request:
+    paths: *juicity_paths
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Check out the matching Rust reference library
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: juicity/juicity-rs
+          ref: 9f9ce7580816f8e24f03d9a93248dee719c10f04
+          path: .rust-reference
+          persist-credentials: false
+      - name: Build Underlay codec fixture
+        run: |
+          mkdir -p .rust-reference/common/examples
+          cp protocol/juicity/testdata/underlay_codec.rs .rust-reference/common/examples/
+          cd .rust-reference
+          cargo build --locked -p juicity-common --example underlay_codec
+          echo "JUICITY_RUST_CODEC=$PWD/target/debug/examples/underlay_codec" >> "$GITHUB_ENV"
+      - name: Verify Juicity against Rust v1.1.4
+        run: |
+          dir="$(mktemp -d "$RUNNER_TEMP/juicity.XXXXXXXX")"
+          curl --fail --location --retry 3 --output "$dir/release.zip" \
+            https://github.com/juicity/juicity-rs/releases/download/v1.1.4/juicity-x86_64-unknown-linux-musl.zip
+          echo "b8bdd4f4c5c5c5ecf62d2952e3165afede6faa747aa4e156c869075cfe744bcb  $dir/release.zip" | sha256sum --check
+          unzip -q "$dir/release.zip" juicity-client juicity-server -d "$dir"
+          chmod +x "$dir"/juicity-{client,server}
+          JUICITY_RUST_DIR="$dir" go test -race -mod=readonly -tags 'with_quic with_utls' ./protocol/juicity github.com/sagernet/sing-quic/juicity

@@ -25,6 +25,7 @@ const (
 	TypeShadowsocksR       = "shadowsocksr"
 	TypeVLESS              = "vless"
 	TypeTUIC               = "tuic"
+	TypeJuicity            = "juicity"
 	TypeHysteria2          = "hysteria2"
 	TypeOpenConnect        = "openconnect"
 	TypeOpenVPNClient      = "openvpn-client"
@@ -98,6 +99,8 @@ func ProxyDisplayName(proxyType string) string {
 		return "VLESS"
 	case TypeTUIC:
 		return "TUIC"
+	case TypeJuicity:
+		return "Juicity"
 	case TypeHysteria2:
 		return "Hysteria2"
 	case TypeAnyTLS:

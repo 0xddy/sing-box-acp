@@ -172,6 +172,7 @@ nav:
           - ShadowTLS: configuration/inbound/shadowtls.md
           - VLESS: configuration/inbound/vless.md
           - TUIC: configuration/inbound/tuic.md
+          - Juicity: configuration/inbound/juicity.md
           - Hysteria2: configuration/inbound/hysteria2.md
           - AnyTLS: configuration/inbound/anytls.md
           - Snell: configuration/inbound/snell.md
@@ -195,6 +196,7 @@ nav:
           - ShadowTLS: configuration/outbound/shadowtls.md
           - VLESS: configuration/outbound/vless.md
           - TUIC: configuration/outbound/tuic.md
+          - Juicity: configuration/outbound/juicity.md
           - Hysteria2: configuration/outbound/hysteria2.md
           - AnyTLS: configuration/outbound/anytls.md
           - Snell: configuration/outbound/snell.md
