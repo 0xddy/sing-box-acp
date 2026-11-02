@@ -49,6 +49,7 @@ type Inbound struct {
 	connections connectionRegistry
 	tlsConfig   tls.ServerConfig
 	transport   adapter.V2RayServerTransport
+	xhttp       bool
 	references  []string
 }
 
@@ -191,6 +192,7 @@ func (r *connectionRegistry) closeMatching(match func(credential) bool) int {
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.VLESSInboundOptions) (adapter.Inbound, error) {
 	inbound := &Inbound{
 		Adapter: inbound.NewAdapter(C.TypeVLESS, tag),
+		xhttp:   options.Transport != nil && options.Transport.Type == C.V2RayTransportTypeXHTTP,
 		ctx:     ctx,
 		router:  uot.NewRouter(router, logger),
 		logger:  logger,
@@ -333,6 +335,9 @@ func (h *Inbound) authenticatorForUsers(users []option.VLESSUser) (*authenticato
 	authorized := make(map[credential]struct{}, len(identities))
 	seen := make(map[[16]byte]string, len(users))
 	for index, user := range users {
+		if h.xhttp && user.Flow != "" {
+			return nil, E.New("VLESS over XHTTP requires an empty user flow")
+		}
 		userID := normalizedUUID(user.UUID)
 		if owner, duplicate := seen[userID]; duplicate {
 			return nil, E.New("duplicate UUID: ", user.UUID, ", already used by ", owner)

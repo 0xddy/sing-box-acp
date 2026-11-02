@@ -15,6 +15,7 @@ V2Ray Transport 是 v2ray 发明的一组私有协议，并污染了其他协议
 * QUIC
 * gRPC
 * HTTPUpgrade
+* XHTTP（ACP）
 
 !!! warning "与 v2ray-core 的区别"
 
@@ -25,6 +26,41 @@ V2Ray Transport 是 v2ray 发明的一组私有协议，并污染了其他协议
 !!! note ""
 
     当内容只有一项时，可以忽略 JSON 数组 [] 标签。
+
+### XHTTP（ACP）
+
+```json
+{
+  "type": "xhttp",
+  "mode": "auto",
+  "host": "proxy.example.com",
+  "path": "/proxy/",
+  "headers": { "X-Site": "edge" },
+  "x_padding_bytes": "100-1000"
+}
+```
+
+ACP 的 XHTTP 入站和出站支持 TLS 或 REALITY 上的 HTTP/2。VLESS 的服务端用户和客户端均应留空 `flow`。使用 raw TCP + Vision 时省略整个 `transport` 对象。
+
+| 模式 | 一条代理连接对应的 HTTP 请求 |
+| --- | --- |
+| `packet-up` | 多个带序号的上行请求，共用一个流式下载 GET。服务端在有限窗口内重排上行数据。 |
+| `stream-up` | 一个流式上行请求和一个独立的下载 GET。 |
+| `stream-one` | 一个双向流式请求，默认使用 POST。 |
+| `auto`（默认） | 入站接受以上三种模式。普通 TLS 出站选择 `packet-up`，REALITY 出站选择 `stream-one`，指定独立下载设置时选择 `stream-up`。 |
+
+| 配置项 | 行为 |
+| --- | --- |
+| `host`、`path`、`headers` | HTTP Host 可与 TLS SNI 分别指定。路径默认 `/`，支持查询字符串。自定义头用于客户端请求或服务端响应。 |
+| `x_padding_bytes`、`x_padding_obfs_mode`、`x_padding_placement`、`x_padding_key`、`x_padding_header`、`x_padding_method` | 默认在 Referer 查询参数中填充 100–1000 字节。混淆模式支持 `header`、`cookie`、`query`、`queryInHeader`，填充方法支持 `repeat-x`、`tokenish`。两端应匹配。 |
+| `session_placement`、`session_key`、`seq_placement`、`seq_key` | 会话 ID 与分包序号可分别放在路径（默认）、查询参数、请求头或 Cookie 中。`session_table` 和 `session_length` 一起指定客户端生成 ID 的字符表和长度。 |
+| `uplink_http_method`、`uplink_data_placement`、`uplink_data_key`、`uplink_chunk_size` | 默认 POST。分包数据可通过请求体、编号请求头或 Cookie 发送。GET 上传需显式选择 `packet-up` 和请求头或 Cookie 数据。 |
+| `sc_max_each_post_bytes`、`sc_min_posts_interval_ms`、`sc_max_buffered_posts` | 分包大小（默认 1,000,000 字节）、发送间隔（默认 30 毫秒）及乱序窗口（默认 30 包）。 |
+| `sc_stream_up_server_secs`、`no_grpc_header`、`no_sse_header`、`server_max_header_bytes` | 流式上行心跳间隔（默认 20–80 秒）、可选内容类型头和入站请求头上限（默认 16 KiB）。 |
+| `xmux`（出站） | 支持 `max_connections` 或 `max_concurrency`、`c_max_reuse_times`、`h_max_request_times`、`h_max_reusable_secs` 和 `h_keep_alive_period`（秒）。控制底层 HTTP 连接复用与轮换。 |
+| `download_settings`（出站） | 在分离模式下可覆盖下载的 `host`、`path`。下载与上行共用服务器地址、拨号器和 TLS 配置。 |
+
+范围值可写为单个数字、`"100-1000"` 形式的字符串或两个数字组成的数组。在 `stream-one` 中，下行半关闭后仍会接收上行尾部，下载方可能要等上传结束才收到 EOF。分离模式可单独结束下载。`packet-up` 的线上协议没有单独的上传 FIN。
 
 ### HTTP
 

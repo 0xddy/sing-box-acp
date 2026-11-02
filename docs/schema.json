@@ -17058,6 +17058,189 @@
           "type": "object",
           "properties": {
             "type": {
+              "const": "xhttp"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "packet-up",
+                "stream-up",
+                "stream-one"
+              ]
+            },
+            "host": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "uplink_http_method": {
+              "type": "string"
+            },
+            "headers": {
+              "$ref": "#/$defs/HTTPHeader"
+            },
+            "no_grpc_header": {
+              "type": "boolean"
+            },
+            "no_sse_header": {
+              "type": "boolean"
+            },
+            "x_padding_bytes": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              ]
+            },
+            "sc_max_each_post_bytes": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              ]
+            },
+            "sc_max_buffered_posts": {
+              "type": "integer"
+            },
+            "sc_min_posts_interval_ms": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              ]
+            },
+            "sc_stream_up_server_secs": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              ]
+            },
+            "x_padding_obfs_mode": {
+              "type": "boolean"
+            },
+            "x_padding_placement": {
+              "type": "string"
+            },
+            "x_padding_key": {
+              "type": "string"
+            },
+            "x_padding_header": {
+              "type": "string"
+            },
+            "x_padding_method": {
+              "type": "string"
+            },
+            "session_placement": {
+              "type": "string"
+            },
+            "session_key": {
+              "type": "string"
+            },
+            "seq_placement": {
+              "type": "string"
+            },
+            "seq_key": {
+              "type": "string"
+            },
+            "uplink_data_placement": {
+              "type": "string"
+            },
+            "uplink_data_key": {
+              "type": "string"
+            },
+            "uplink_chunk_size": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              ]
+            },
+            "session_table": {
+              "type": "string"
+            },
+            "session_length": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              ]
+            },
+            "server_max_header_bytes": {
+              "type": "integer"
+            },
+            "download_settings": {
+              "$ref": "#/$defs/XHTTPDownloadOptions"
+            },
+            "xmux": {
+              "$ref": "#/$defs/XHTTPMuxOptions"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
               "const": "http"
             },
             "host": {
@@ -17258,6 +17441,107 @@
               }
             }
           ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "XHTTPDownloadOptions": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "XHTTPMuxOptions": {
+      "type": "object",
+      "properties": {
+        "max_concurrency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          ]
+        },
+        "max_connections": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          ]
+        },
+        "c_max_reuse_times": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          ]
+        },
+        "h_max_request_times": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          ]
+        },
+        "h_max_reusable_secs": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          ]
+        },
+        "h_keep_alive_period": {
+          "type": "integer"
         }
       },
       "additionalProperties": false

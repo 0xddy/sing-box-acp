@@ -1,0 +1,13 @@
+codec.go, codec_options.go and option/v2ray_xhttp.go include adapted wire-format code and configuration fields from
+github.com/justinwoo280/sing-xhttp v0.1.6 (xhttp/meta.go and xhttp/options.go).
+These files are available under the Mozilla Public License 2.0 in LICENSE-MPL-2.0.
+
+sing-xhttp
+Copyright 2026 justinwoo280
+
+This product includes software developed at the Xray-core project
+(https://github.com/XTLS/Xray-core), licensed under MPL-2.0.
+
+Portions of code are ported from Xray-core/transport/internet/splithttp,
+specifically upload_queue.go, the padding generators (xpadding.go), and
+the XMUX connection manager (mux.go).

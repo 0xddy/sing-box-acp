@@ -17,6 +17,12 @@
 
 仓库只维护 `main` 主分支。调用方固定经过验证的提交，历史基线通过提交回退，例如 `v1.14.0` 对应 `ebd3b1cd3e720e1cac53edcdf8bc15d4d329599e`。
 
+## XHTTP
+
+VLESS 入站和出站可通过 HTTP/2 使用 XHTTP。支持 `auto`、`packet-up`、`stream-up` 和 `stream-one`。REALITY 节点使用 XHTTP 时，两端的 VLESS `flow` 均留空。配置示例、分包、padding 和 XMUX 参数见 [XHTTP 配置](docs/configuration/shared/v2ray-transport.zh.md#xhttpacp)。
+
+互通测试使用本机回环地址。设置 `XRAY_BIN` 和 `SING_BOX_LX_BIN` 为对端可执行文件的路径后运行 `go test -tags with_utls -count=1 ./transport/v2rayxhttp`。测试按模式检查实际数据传输，可分别验证官方 Xray 的两个方向，以及带 `with_xhttp` 的 sing-box-lx 客户端。
+
 ## 库能力
 
 ### 原子用户热更新

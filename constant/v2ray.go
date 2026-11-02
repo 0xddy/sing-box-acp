@@ -1,6 +1,7 @@
 package constant
 
 const (
+	V2RayTransportTypeXHTTP       = "xhttp"
 	V2RayTransportTypeHTTP        = "http"
 	V2RayTransportTypeWebsocket   = "ws"
 	V2RayTransportTypeQUIC        = "quic"
