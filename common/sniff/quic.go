@@ -260,6 +260,9 @@ func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, pack
 			if err != nil {
 				return err
 			}
+			if length > uint64(decryptedReader.Len()) {
+				return os.ErrInvalid
+			}
 			index := len(decrypted) - decryptedReader.Len()
 			if length == 0 || length > uint64(decryptedReader.Len()) || offset > maxQUICCryptoBytes || length > maxQUICCryptoBytes-offset || len(fragments) >= maxQUICCryptoFragments {
 				return os.ErrInvalid

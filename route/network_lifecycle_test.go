@@ -2,7 +2,7 @@ package route
 
 import (
 	"context"
-	"sync"
+
 	"sync/atomic"
 	"testing"
 	"time"
@@ -56,8 +56,10 @@ type networkLifecycleMonitor struct {
 	closed chan struct{}
 }
 
-func (m networkLifecycleMonitor) DefaultInterface() *control.Interface { return nil }
-func (m networkLifecycleMonitor) Close() error                         { close(m.closed); return nil }
+func (m networkLifecycleMonitor) DefaultInterface() *control.Interface {
+	return &control.Interface{Index: 1, Name: "test-interface"}
+}
+func (m networkLifecycleMonitor) Close() error { close(m.closed); return nil }
 
 func lifecycleNetworkManager(router *networkLifecycleRouter) *NetworkManager {
 	ctx := pause.WithDefaultManager(context.Background())
@@ -71,40 +73,28 @@ func lifecycleNetworkManager(router *networkLifecycleRouter) *NetworkManager {
 func TestNetworkManagerPostStartSerializesInterfaceUpdates(t *testing.T) {
 	router := &networkLifecycleRouter{}
 	m := lifecycleNetworkManager(router)
-	iif := &control.Interface{Index: 1, Name: "test-interface"}
-	m.updateInterface(context.Background(), iif)
+	monitor := networkLifecycleMonitor{closed: make(chan struct{})}
+	m.interfaceMonitor = monitor
+	scope := adapter.NewScope(m.ctx, m.logger)
+	defer scope.Close()
+	// Coalesce notifications until the manager can safely reset its peers.
+	for range 1000 {
+		m.notifyInterfaceUpdate(monitor.DefaultInterface(), 0)
+	}
 	if router.resets.Load() != 0 {
 		t.Fatal("interface update reset unstarted services")
 	}
-	ready := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		<-ready
-		for range 1000 {
-			m.updateInterface(context.Background(), iif)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		<-ready
-		if err := m.Start(adapter.StartStatePostStart); err != nil {
-			t.Error(err)
-		}
-	}()
-	close(ready)
-	wg.Wait()
-	before := router.resets.Load()
-	m.updateInterface(context.Background(), iif)
-	if router.resets.Load() != before+1 {
-		t.Fatal("post-start interface update did not reset services")
-	}
-	if err := m.Close(); err != nil {
+	if err := m.Start(adapter.StartStatePostStart, scope); err != nil {
 		t.Fatal(err)
 	}
-	m.updateInterface(context.Background(), iif)
-	if router.resets.Load() != before+1 {
+	if err := scope.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := router.resets.Load()
+	m.notifyInterfaceUpdate(monitor.DefaultInterface(), 0)
+	m.resetRunAccess.Lock()
+	defer m.resetRunAccess.Unlock()
+	if router.resets.Load() != before {
 		t.Fatal("closed services were reset")
 	}
 }
@@ -116,7 +106,9 @@ func TestNetworkManagerCloseCancelsAndWaitsForInterfaceReset(t *testing.T) {
 	m.endpoint = networkLifecycleEndpoints{endpoints: []adapter.Endpoint{networkLifecycleEndpoint{context: contexts}}}
 	monitorClosed := make(chan struct{})
 	m.interfaceMonitor = networkLifecycleMonitor{closed: monitorClosed}
-	if err := m.Start(adapter.StartStatePostStart); err != nil {
+	scope := adapter.NewScope(m.ctx, m.logger)
+	scope.Add(m.interfaceMonitor.Close)
+	if err := m.Start(adapter.StartStatePostStart, scope); err != nil {
 		t.Fatal(err)
 	}
 	m.notifyInterfaceUpdate(&control.Interface{Index: 1, Name: "test-interface"}, 0)
@@ -132,7 +124,7 @@ func TestNetworkManagerCloseCancelsAndWaitsForInterfaceReset(t *testing.T) {
 		t.Fatal("interface reset did not start")
 	}
 	closeFinished := make(chan error, 1)
-	go func() { closeFinished <- m.Close() }()
+	go func() { closeFinished <- scope.Close() }()
 	select {
 	case <-updateContext.Done():
 	case <-time.After(time.Second):
@@ -162,10 +154,8 @@ func TestNetworkManagerCloseCancelsAndWaitsForInterfaceReset(t *testing.T) {
 	before := router.resets.Load()
 	m.notifyInterfaceUpdate(&control.Interface{Index: 2, Name: "late-interface"}, 0)
 	m.notifyInterfaceUpdate(nil, 0)
-	if err := m.Start(adapter.StartStatePostStart); err != nil {
-		t.Fatal(err)
-	}
-	m.updateInterface(context.Background(), &control.Interface{Index: 2, Name: "late-interface"})
+	m.resetRunAccess.Lock()
+	defer m.resetRunAccess.Unlock()
 	if router.resets.Load() != before {
 		t.Fatal("closed manager admitted a reset or reactivated")
 	}

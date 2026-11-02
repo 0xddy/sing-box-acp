@@ -8,9 +8,9 @@
 
 | 组件 | 基线 |
 | --- | --- |
-| sing-box 上游 | `v1.14.1`（`1ac1a339cb12`） |
+| sing-box 上游 | `v1.14.4`（`c005f35300ce`） |
 | sing-box-acp | `main` |
-| 内嵌 sing-quic 上游 | `v0.7.0` |
+| 内嵌 sing-quic 上游 | `v0.7.2-0.20261020082049-7e0a5869a5f4` |
 | Go | `1.25.5` 或更高兼容版本 |
 
 根模块通过 `replace` 将 `github.com/sagernet/sing-quic` 指向 [`third_party/sing-quic-acp`](third_party/sing-quic-acp)。该本地模块包含 Hysteria2 会话撤销所需的定制实现，集成时必须与主模块一起保留。
@@ -71,7 +71,7 @@ flowchart LR
 该分支继续声明原始模块路径。通过本地源码集成时，在调用方的 `go.mod` 中添加：
 
 ```mod
-require github.com/sagernet/sing-box v1.14.1
+require github.com/sagernet/sing-box v1.14.4
 
 replace github.com/sagernet/sing-box => ../sing-box-acp
 ```

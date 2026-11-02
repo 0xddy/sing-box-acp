@@ -94,9 +94,12 @@ func TestTLSAuthenticationWebFallbackAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := server.(*Inbound)
-	defer h.Close()
-	if err = h.Start(adapter.StartStateStart); err != nil {
-		t.Fatal(err)
+	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
+	defer scope.Close()
+	for _, stage := range adapter.ListStartStages {
+		if err = h.Start(stage, scope); err != nil {
+			t.Fatal(err)
+		}
 	}
 	address := h.listener.TCPListener().Addr().String()
 	dial := func(alpn string) (net.Conn, error) {

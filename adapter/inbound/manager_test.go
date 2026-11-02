@@ -11,8 +11,8 @@ import (
 
 func TestManagerCreateClosesInboundWhenStartFails(t *testing.T) {
 	candidate := &startFailureInbound{}
-	manager := NewManager(nil, &singleInboundRegistry{inbound: candidate}, nil)
-	manager.started = true
+	manager := NewManager(&singleInboundRegistry{inbound: candidate}, nil)
+	manager.scope = adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
 
 	err := manager.Create(context.Background(), nil, nil, "test", "test", nil)
 	if err == nil {
@@ -54,7 +54,8 @@ func (*startFailureInbound) Tag() string {
 	return "test"
 }
 
-func (*startFailureInbound) Start(adapter.StartStage) error {
+func (i *startFailureInbound) Start(_ adapter.StartStage, scope *adapter.Scope) error {
+	scope.Add(i.Close)
 	return errors.New("start failed")
 }
 
