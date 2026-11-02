@@ -1460,7 +1460,10 @@ func (c *Conn) Read(b []byte) (int, error) {
 	// the EOF until its next read, by which time a client goroutine might
 	// have already tried to reuse the HTTP connection for a new request.
 	// See https://golang.org/cl/76400046 and https://golang.org/issue/3514
-	if n != 0 && c.input.Len() == 0 && c.rawInput.Len() > 0 &&
+	// After the TLS 1.3 handshake, alerts are encrypted application-data
+	// records. A bare alert byte can instead be data for a protocol taking
+	// over the underlying connection after this last authenticated record.
+	if c.vers != VersionTLS13 && n != 0 && c.input.Len() == 0 && c.rawInput.Len() > 0 &&
 		recordType(c.rawInput.Bytes()[0]) == recordTypeAlert {
 		if err := c.readRecord(); err != nil {
 			return n, err // will be io.EOF on closeNotify

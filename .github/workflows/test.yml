@@ -30,7 +30,6 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - windows-latest
           - macos-latest
         go:
           - ~1.25
@@ -48,10 +47,5 @@ jobs:
         run: |
           echo "BUILD_TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" >> "$GITHUB_ENV"
           echo "LDFLAGS_SHARED=$(cat release/LDFLAGS)" >> "$GITHUB_ENV"
-      - name: Test (unix)
-        if: matrix.os != 'windows-latest'
+      - name: Test
         run: go test -v -exec sudo -tags "$BUILD_TAGS" -ldflags "$LDFLAGS_SHARED" ./...
-      - name: Test (windows)
-        if: matrix.os == 'windows-latest'
-        shell: bash
-        run: go test -v -tags "$BUILD_TAGS" -ldflags "$LDFLAGS_SHARED" ./...

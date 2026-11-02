@@ -21,29 +21,40 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-var tlsRegistry []func(conn net.Conn) (loaded bool, netConn net.Conn, reflectType reflect.Type, reflectPointer uintptr)
+var tlsRegistry []func(conn net.Conn) (loaded bool, netConn net.Conn, reflectType reflect.Type, reflectPointer unsafe.Pointer)
 
 func init() {
-	tlsRegistry = append(tlsRegistry, func(conn net.Conn) (loaded bool, netConn net.Conn, reflectType reflect.Type, reflectPointer uintptr) {
+	tlsRegistry = append(tlsRegistry, func(conn net.Conn) (loaded bool, netConn net.Conn, reflectType reflect.Type, reflectPointer unsafe.Pointer) {
 		tlsConn, loaded := N.CastReader[*tls.Conn](conn)
 		if !loaded {
 			return
 		}
-		return true, tlsConn.NetConn(), reflect.TypeOf(tlsConn).Elem(), uintptr(unsafe.Pointer(tlsConn))
+		return true, tlsConn.NetConn(), reflect.TypeOf(tlsConn).Elem(), unsafe.Pointer(tlsConn)
 	})
 }
 
 const xrayChunkSize = 8192
 
+// visionFilterResult is a consistent decision for one write. After the
+// inspection budget is exhausted the result is immutable in both directions.
+type visionFilterResult struct {
+	isTLS            bool
+	isTLS12orAbove   bool
+	enableXTLS       bool
+	packetsRemaining int
+}
+
 type VisionConn struct {
 	net.Conn
-	reader      *bufio.ChunkReader
-	writer      N.VectorisedWriter
-	writeAccess sync.Mutex
-	input       *bytes.Reader
-	rawInput    *bytes.Buffer
-	netConn     net.Conn
-	logger      logger.Logger
+	reader       *bufio.ChunkReader
+	writer       N.VectorisedWriter
+	writeAccess  sync.Mutex
+	filterAccess sync.Mutex
+	finalFilter  atomic.Pointer[visionFilterResult]
+	input        *bytes.Reader
+	rawInput     *bytes.Buffer
+	netConn      net.Conn
+	logger       logger.Logger
 
 	userUUID               [16]byte
 	isTLS                  bool
@@ -69,7 +80,7 @@ func NewVisionConn(conn net.Conn, tlsConn net.Conn, userUUID [16]byte, logger lo
 	var (
 		loaded         bool
 		reflectType    reflect.Type
-		reflectPointer uintptr
+		reflectPointer unsafe.Pointer
 		netConn        net.Conn
 	)
 	for _, tlsCreator := range tlsRegistry {
@@ -87,8 +98,8 @@ func NewVisionConn(conn net.Conn, tlsConn net.Conn, userUUID [16]byte, logger lo
 		Conn:     conn,
 		reader:   bufio.NewChunkReader(conn, xrayChunkSize),
 		writer:   bufio.NewVectorisedWriter(conn),
-		input:    (*bytes.Reader)(unsafe.Pointer(reflectPointer + input.Offset)),
-		rawInput: (*bytes.Buffer)(unsafe.Pointer(reflectPointer + rawInput.Offset)),
+		input:    (*bytes.Reader)(unsafe.Add(reflectPointer, input.Offset)),
+		rawInput: (*bytes.Buffer)(unsafe.Add(reflectPointer, rawInput.Offset)),
 		netConn:  netConn,
 		logger:   logger,
 
@@ -138,7 +149,7 @@ func (c *VisionConn) Read(p []byte) (n int, err error) {
 			}
 			bufferBytes = chunkBuffer.Bytes()
 		}
-		if c.withinPaddingBuffers || c.numberOfPacketToFilter > 0 {
+		if c.withinPaddingBuffers || c.inspectTLS(nil).packetsRemaining > 0 {
 			buffers := c.unPadding(bufferBytes)
 			if chunkBuffer != nil {
 				chunkBuffer.Reset()
@@ -176,15 +187,12 @@ func (c *VisionConn) Read(p []byte) (n int, err error) {
 			} else {
 				c.withinPaddingBuffers = false
 			}
-			if c.numberOfPacketToFilter > 0 {
-				c.filterTLS(buf.ToSliceMulti(buffers))
+			if c.finalFilter.Load() == nil {
+				c.inspectTLS(buf.ToSliceMulti(buffers))
 			}
 			c.remainingBuffers = buffers
 			continue
 		} else {
-			if c.numberOfPacketToFilter > 0 {
-				c.filterTLS([][]byte{bufferBytes})
-			}
 			if chunkBuffer != nil {
 				c.remainingBuffers = append(c.remainingBuffers, buf.As(chunkBuffer.Bytes()))
 				chunkBuffer.Reset() // chunkBuffer should not be release and only reused after c.remainingBuffers be emptied, so must reset at here
@@ -198,30 +206,28 @@ func (c *VisionConn) Read(p []byte) (n int, err error) {
 func (c *VisionConn) Write(p []byte) (n int, err error) {
 	c.writeAccess.Lock()
 	defer c.writeAccess.Unlock()
-	if c.numberOfPacketToFilter > 0 {
-		c.filterTLS([][]byte{p})
-	}
+	filter := c.inspectTLS([][]byte{p})
 	if c.isPadding {
 		inputLen := len(p)
 		buffers := reshapeBuffer(p)
 		var specIndex int
 		for i, buffer := range buffers {
-			if c.isTLS && buffer.Len() > 6 && bytes.Equal(tlsApplicationDataStart, buffer.To(3)) {
+			if filter.isTLS && buffer.Len() > 6 && bytes.Equal(tlsApplicationDataStart, buffer.To(3)) {
 				var command byte = commandPaddingEnd
-				if c.enableXTLS {
+				if filter.enableXTLS {
 					c.directWrite.Store(true)
 					specIndex = i
 					command = commandPaddingDirect
 				}
 				c.isPadding = false
-				buffers[i] = c.padding(buffer, command)
+				buffers[i] = c.padding(buffer, command, filter.isTLS)
 				break
-			} else if !c.isTLS12orAbove && c.numberOfPacketToFilter <= 1 {
+			} else if !filter.isTLS12orAbove && filter.packetsRemaining <= 1 {
 				c.isPadding = false
-				buffers[i] = c.padding(buffer, commandPaddingEnd)
+				buffers[i] = c.padding(buffer, commandPaddingEnd, filter.isTLS)
 				break
 			}
-			buffers[i] = c.padding(buffer, commandPaddingContinue)
+			buffers[i] = c.padding(buffer, commandPaddingContinue, filter.isTLS)
 		}
 		if c.directWrite.Load() {
 			encryptedBuffer := buffers[:specIndex+1]
@@ -249,6 +255,29 @@ func (c *VisionConn) Write(p []byte) (n int, err error) {
 	} else {
 		return c.Conn.Write(p)
 	}
+}
+
+// Serialize only the inspection of the initial packets. Never hold this
+// mutex over a network operation or use it to serialize full-duplex I/O.
+func (c *VisionConn) inspectTLS(buffers [][]byte) visionFilterResult {
+	if result := c.finalFilter.Load(); result != nil {
+		return *result
+	}
+	c.filterAccess.Lock()
+	defer c.filterAccess.Unlock()
+	if c.numberOfPacketToFilter > 0 {
+		c.filterTLS(buffers)
+	}
+	result := visionFilterResult{
+		isTLS:            c.isTLS,
+		isTLS12orAbove:   c.isTLS12orAbove,
+		enableXTLS:       c.enableXTLS,
+		packetsRemaining: c.numberOfPacketToFilter,
+	}
+	if result.packetsRemaining <= 0 && c.finalFilter.Load() == nil {
+		c.finalFilter.Store(&result)
+	}
+	return result
 }
 
 func (c *VisionConn) filterTLS(buffers [][]byte) {
@@ -301,13 +330,13 @@ func (c *VisionConn) filterTLS(buffers [][]byte) {
 	}
 }
 
-func (c *VisionConn) padding(buffer *buf.Buffer, command byte) *buf.Buffer {
+func (c *VisionConn) padding(buffer *buf.Buffer, command byte, isTLS bool) *buf.Buffer {
 	contentLen := 0
 	paddingLen := 0
 	if buffer != nil {
 		contentLen = buffer.Len()
 	}
-	if contentLen < 900 && c.isTLS {
+	if contentLen < 900 && isTLS {
 		l, _ := rand.Int(rand.Reader, big.NewInt(500))
 		paddingLen = int(l.Int64()) + 900 - contentLen
 	} else {

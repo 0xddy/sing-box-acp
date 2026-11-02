@@ -84,6 +84,10 @@ require (
 
 replace github.com/sagernet/sing-quic => ./third_party/sing-quic-acp
 
+replace github.com/sagernet/sing-vmess => ./third_party/sing-vmess-acp
+
+replace github.com/metacubex/utls => ./third_party/utls-acp
+
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	filippo.io/hpke v0.4.0 // indirect
