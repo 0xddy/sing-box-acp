@@ -1,6 +1,7 @@
 package mieru
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net"
@@ -17,8 +18,9 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/buf"
+	sbufio "github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
-	"github.com/sagernet/sing/common/varbin"
 	"github.com/sagernet/sing/protocol/socks"
 	"github.com/sagernet/sing/protocol/socks/socks5"
 	"google.golang.org/protobuf/proto"
@@ -30,7 +32,6 @@ func RegisterInbound(registry *inbound.Registry) {
 
 type Inbound struct {
 	inbound.Adapter
-	ctx     context.Context
 	router  adapter.Router
 	logger  log.ContextLogger
 	service server.ManagedServer
@@ -65,7 +66,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err = s.Store(&server.ServerConfig{Config: config, StreamListenerFactory: f, PacketListenerFactory: f}); err != nil {
 		return nil, err
 	}
-	return &Inbound{Adapter: inbound.NewAdapter(C.TypeMieru, tag), ctx: ctx, router: router, logger: logger, service: s, listen: o.ListenOptions}, nil
+	return &Inbound{Adapter: inbound.NewAdapter(C.TypeMieru, tag), router: router, logger: logger, service: s, listen: o.ListenOptions}, nil
 }
 
 func ValidateUsers(users []option.MieruUser) error { return server.ValidateUsers(credentials(users)) }
@@ -82,7 +83,7 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		return err
 	}
 	h.workers.Add(1)
-	go h.acceptLoop()
+	go h.acceptLoop(scope.Context())
 	scope.Add(func() error {
 		err := h.service.Stop()
 		h.workers.Wait()
@@ -91,7 +92,7 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	return nil
 }
 
-func (h *Inbound) acceptLoop() {
+func (h *Inbound) acceptLoop(ctx context.Context) {
 	defer h.workers.Done()
 	for {
 		conn, err := h.service.AcceptSession()
@@ -101,7 +102,7 @@ func (h *Inbound) acceptLoop() {
 		h.workers.Add(1)
 		go func() {
 			defer h.workers.Done()
-			if err := h.route(conn); err != nil {
+			if err := h.route(ctx, conn); err != nil {
 				conn.Close()
 				h.logger.Debug("mieru session: ", err)
 			}
@@ -109,9 +110,10 @@ func (h *Inbound) acceptLoop() {
 	}
 }
 
-func (h *Inbound) route(conn net.Conn) error {
+func (h *Inbound) route(ctx context.Context, conn net.Conn) error {
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	req, err := socks5.ReadRequest(varbin.StubReader(conn))
+	reader := bufio.NewReader(conn)
+	req, err := socks5.ReadRequest(reader)
 	if err != nil {
 		return err
 	}
@@ -120,7 +122,12 @@ func (h *Inbound) route(conn net.Conn) error {
 	if !ok || user.UserName() == "" {
 		return fmt.Errorf("missing authenticated user")
 	}
-	ctx := log.ContextWithNewID(h.ctx)
+	ctx = log.ContextWithNewID(ctx)
+	earlyBytes := reader.Buffered()
+	if earlyBytes > 0 {
+		payload, _ := reader.Peek(earlyBytes)
+		conn = sbufio.NewCachedConn(conn, buf.As(payload))
+	}
 	metadata := adapter.InboundContext{
 		Inbound: h.Tag(), InboundType: h.Type(), InboundDetour: h.listen.Detour,
 		Source:            M.SocksaddrFromNet(conn.RemoteAddr()).Unwrap(),
@@ -130,7 +137,10 @@ func (h *Inbound) route(conn net.Conn) error {
 	}
 	switch req.Command {
 	case socks5.CommandConnect:
-		h.router.RouteConnectionEx(ctx, socks.NewLazyConn(conn, socks5.Version), metadata, nil)
+		// Standard clients wait for the CONNECT result. Only sniff when the
+		// request already carried application data (the no_wait handshake).
+		metadata.SkipStreamSniff = earlyBytes == 0
+		h.router.RouteConnectionEx(ctx, connectConn{socks.NewLazyConn(conn, socks5.Version)}, metadata, nil)
 	case socks5.CommandUDPAssociate:
 		// The client waits for association success before sending the first target.
 		if err := socks5.WriteResponse(conn, socks5.Response{ReplyCode: socks5.ReplyCodeSuccess}); err != nil {
@@ -147,3 +157,9 @@ func (h *Inbound) route(conn net.Conn) error {
 	}
 	return nil
 }
+
+// A pre-dial read (e.g. sniffing early data) must not send a SOCKS success.
+// Keep LazyConn's response handling for the router's actual dial result.
+type connectConn struct{ *socks.LazyConn }
+
+func (c connectConn) Read(p []byte) (int, error) { return c.Conn.Read(p) }

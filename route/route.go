@@ -747,6 +747,9 @@ func (r *Router) actionSniff(
 		return
 	}
 	if inputConn != nil {
+		if metadata.SkipStreamSniff {
+			return
+		}
 		if len(action.StreamSniffers) == 0 && len(action.PacketSniffers) > 0 {
 			return
 		} else if slices.Equal(metadata.SnifferNames, action.SnifferNames) && metadata.SniffError != nil && !errors.Is(metadata.SniffError, sniff.ErrNeedMoreData) {

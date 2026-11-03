@@ -24,3 +24,5 @@ Use the common listen options. Each user needs a unique `name`. Usernames and pa
 `user_hint_is_mandatory` defaults to false. Enable it to require the protocol's username hint from clients.
 
 `mtu` defaults to 1400 and accepts values from 1280 through 1500. Set `traffic_pattern` to an official Base64 traffic pattern, or omit it for upstream defaults. [Traffic patterns](https://github.com/enfein/mieru/blob/v3.39.0/docs/traffic-pattern.md)
+
+A TCP client waiting for the CONNECT response receives the result of dialing the destination. When a `no_wait` client includes payload with its request, routing rules can sniff those bytes before dialing.

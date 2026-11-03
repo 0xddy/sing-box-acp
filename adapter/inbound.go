@@ -77,6 +77,8 @@ type InboundContext struct {
 	// TLS/QUIC ClientHello, including GREASE. It does not confirm ECH use or
 	// whether SniffDomain is the actual destination or an outer public name.
 	SniffECHPresent bool
+	// SkipStreamSniff when the peer waits for a dial result before sending payload.
+	SkipStreamSniff bool
 	// SniffDestination identifies the UDP target whose payload produced the
 	// sniffed protocol/domain. A zero value means no reliable UDP attribution.
 	SniffDestination M.Socksaddr
