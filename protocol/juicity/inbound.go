@@ -38,7 +38,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		return nil, C.ErrTLSRequired
 	}
 	opts := *o.TLS
-	if err := validateTLS(opts.MinVersion, opts.MaxVersion, opts.ALPN); err != nil {
+	if err := option.ValidateJuicityTLS(opts.MinVersion, opts.MaxVersion, opts.ALPN); err != nil {
 		return nil, err
 	}
 	opts.MinVersion = "1.3"

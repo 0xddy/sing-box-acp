@@ -2,10 +2,8 @@ package juicity
 
 import (
 	"context"
-	"errors"
 	"net"
 
-	"github.com/gofrs/uuid/v5"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
@@ -30,28 +28,14 @@ type Outbound struct {
 }
 
 func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, o option.JuicityOutboundOptions) (adapter.Outbound, error) {
-	if o.TLS == nil || !o.TLS.Enabled {
-		return nil, C.ErrTLSRequired
-	}
-	opts := *o.TLS
-	if err := validateTLS(opts.MinVersion, opts.MaxVersion, opts.ALPN); err != nil {
+	id, pin, err := o.ClientCredentials()
+	if err != nil {
 		return nil, err
 	}
+	opts := *o.TLS
 	opts.MinVersion = "1.3"
 	opts.ALPN = []string{"h3"}
-	id, err := uuid.FromString(o.UUID)
-	if err != nil {
-		return nil, E.Cause(err, "invalid Juicity uuid")
-	}
-	var pin []byte
-	if o.PinnedCertChainSHA256 != "" {
-		if len(opts.CertificatePublicKeySHA256) > 0 || len(opts.Certificate) > 0 || opts.CertificatePath != "" {
-			return nil, errors.New("pinned_certchain_sha256 conflicts with other certificate trust settings")
-		}
-		pin, err = chainPin(o.PinnedCertChainSHA256)
-		if err != nil {
-			return nil, err
-		}
+	if pin != nil {
 		opts.Insecure = true // Verification is supplied by withChainPin.
 	}
 	cfg, err := tls.NewClient(ctx, logger, o.Server, opts)

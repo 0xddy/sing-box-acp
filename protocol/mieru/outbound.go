@@ -63,7 +63,7 @@ func (r endpointResolver) LookupIP(ctx context.Context, network, host string) ([
 }
 
 func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, o option.MieruOutboundOptions) (adapter.Outbound, error) {
-	profile, err := clientProfile(o)
+	profile, err := o.ClientProfile()
 	if err != nil {
 		return nil, err
 	}

@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	stdtls "crypto/tls"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
 
 	"github.com/sagernet/sing-box/common/tls"
@@ -21,28 +19,6 @@ func quicOptions(o option.QUICOptions) qtls.QUICOptions {
 		MaxConcurrentStreams:    o.MaxConcurrentStreams, InitialPacketSize: o.InitialPacketSize,
 		DisablePathMTUDiscovery: o.DisablePathMTUDiscovery,
 	}
-}
-
-func validateTLS(min, max string, alpn []string) error {
-	if (min != "" && min != "1.3") || (max != "" && max != "1.3") {
-		return errors.New("Juicity requires TLS 1.3")
-	}
-	if len(alpn) != 0 && (len(alpn) != 1 || alpn[0] != "h3") {
-		return errors.New("Juicity requires ALPN h3")
-	}
-	return nil
-}
-
-func chainPin(value string) ([]byte, error) {
-	for _, decode := range []func(string) ([]byte, error){
-		base64.URLEncoding.DecodeString, base64.StdEncoding.DecodeString,
-		base64.RawURLEncoding.DecodeString, base64.RawStdEncoding.DecodeString, hex.DecodeString,
-	} {
-		if pin, err := decode(value); err == nil && len(pin) == sha256.Size {
-			return pin, nil
-		}
-	}
-	return nil, errors.New("invalid pinned_certchain_sha256")
 }
 
 // Pin the certificate chain as transmitted, including when a TLS session resumes.

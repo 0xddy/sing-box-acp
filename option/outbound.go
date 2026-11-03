@@ -62,6 +62,14 @@ func (h *Outbound) UnmarshalJSONContext(ctx context.Context, content []byte) err
 	return nil
 }
 
+// Validate checks protocol-specific configuration without opening sockets or loading runtime registries.
+func (h Outbound) Validate() error {
+	if validator, ok := h.Options.(interface{ validateOutbound() error }); ok {
+		return validator.validateOutbound()
+	}
+	return nil
+}
+
 func (h Outbound) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
 	return builder.Define("Outbound", func() (*schema.Node, error) {
 		registry := service.FromContext[OutboundOptionsRegistry](builder.Context())

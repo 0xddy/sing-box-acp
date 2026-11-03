@@ -49,7 +49,7 @@ func (f listenFactory) ListenPacket(context.Context, string, string) (net.Packet
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, o option.MieruInboundOptions) (adapter.Inbound, error) {
-	transport, pattern, err := settings(o.MieruOptions)
+	transport, pattern, err := o.Settings()
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +67,14 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		return nil, err
 	}
 	return &Inbound{Adapter: inbound.NewAdapter(C.TypeMieru, tag), router: router, logger: logger, service: s, listen: o.ListenOptions}, nil
+}
+
+func credentials(users []option.MieruUser) []*pb.User {
+	result := make([]*pb.User, 0, len(users))
+	for _, u := range users {
+		result = append(result, &pb.User{Name: proto.String(u.Name), Password: proto.String(u.Password)})
+	}
+	return result
 }
 
 func ValidateUsers(users []option.MieruUser) error { return server.ValidateUsers(credentials(users)) }

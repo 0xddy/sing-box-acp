@@ -1,4 +1,4 @@
-package mieru
+package option
 
 import (
 	"fmt"
@@ -6,13 +6,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/enfein/mieru/v3/apis/constant"
 	"github.com/enfein/mieru/v3/apis/trafficpattern"
 	pb "github.com/enfein/mieru/v3/pkg/appctl/appctlpb"
-	"github.com/sagernet/sing-box/option"
 	"google.golang.org/protobuf/proto"
 )
 
-func settings(o option.MieruOptions) (pb.TransportProtocol, *pb.TrafficPattern, error) {
+func (o MieruOptions) Settings() (pb.TransportProtocol, *pb.TrafficPattern, error) {
 	transport := pb.TransportProtocol_TCP
 	switch o.Transport {
 	case "", "tcp":
@@ -37,21 +37,17 @@ func settings(o option.MieruOptions) (pb.TransportProtocol, *pb.TrafficPattern, 
 	return transport, pattern, nil
 }
 
-func credentials(users []option.MieruUser) []*pb.User {
-	result := make([]*pb.User, 0, len(users))
-	for _, u := range users {
-		result = append(result, &pb.User{Name: proto.String(u.Name), Password: proto.String(u.Password)})
-	}
-	return result
-}
-
-func clientProfile(o option.MieruOutboundOptions) (*pb.ClientProfile, error) {
-	transport, pattern, err := settings(o.MieruOptions)
+// ClientProfile builds the wire profile without creating a dialer or a running client.
+func (o MieruOutboundOptions) ClientProfile() (*pb.ClientProfile, error) {
+	transport, pattern, err := o.Settings()
 	if err != nil {
 		return nil, err
 	}
 	if (len(o.ServerPorts) == 0) == (o.ServerPort == 0) {
 		return nil, fmt.Errorf("set exactly one of server_port and server_ports")
+	}
+	if o.Server == "" || o.Username == "" || len(o.Username) > constant.MaxUserNameLen || o.Password == "" || len(o.Password) > 64 {
+		return nil, fmt.Errorf("Mieru requires a server and credentials of 1 to 64 bytes")
 	}
 	endpoint := &pb.ServerEndpoint{}
 	if net.ParseIP(o.Server) != nil {
@@ -105,4 +101,9 @@ func clientProfile(o option.MieruOutboundOptions) (*pb.ClientProfile, error) {
 		Mtu:  proto.Int32(int32(o.MTU)), TrafficPattern: pattern,
 		Multiplexing: &pb.MultiplexingConfig{Level: level.Enum()}, HandshakeMode: mode.Enum(),
 	}, nil
+}
+
+func (o *MieruOutboundOptions) validateOutbound() error {
+	_, err := o.ClientProfile()
+	return err
 }
