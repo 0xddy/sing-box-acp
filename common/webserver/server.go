@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"sync"
+	"time"
 
 	"github.com/sagernet/sing-box/common/webprofile"
 	"github.com/sagernet/sing/common/logger"
@@ -28,6 +30,7 @@ type Server struct {
 	started, closed bool
 	connections     map[*connection]struct{}
 	wg              sync.WaitGroup
+	runtimeErr      error
 }
 
 type stateKey struct{}
@@ -38,6 +41,13 @@ func New(handler http.Handler, logger logger.ContextLogger) *Server {
 	s := &Server{logger: logger, ctx: ctx, cancel: cancel, connections: make(map[*connection]struct{}), listener: &connectionListener{queue: make(chan net.Conn, maxConnections), done: make(chan struct{})}}
 	s.http = &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.ProtoMajor == 3 {
+				controller := http.NewResponseController(w)
+				// The HTTP/3 server is externally owned. Give website requests
+				// the same deadline; authenticated CONNECT clears it per stream.
+				_ = controller.SetReadDeadline(time.Now().Add(profileIOTimeout))
+				_ = controller.SetWriteDeadline(time.Now().Add(profileIOTimeout))
+			}
 			if state, ok := r.Context().Value(stateKey{}).(tls.ConnectionState); ok {
 				r.TLS = &state
 			}
@@ -71,6 +81,16 @@ func New(handler http.Handler, logger logger.ContextLogger) *Server {
 	return s
 }
 
+// NewForConnect retains the website policy and resource limits, with the current
+// HTTP/2 scheduler for long-lived, independently cancellable CONNECT streams.
+// The legacy priority tree can return an empty frame during bulk resets.
+// The engine's non-default SETTINGS remain visible on the wire.
+func NewForConnect(handler http.Handler, logger logger.ContextLogger) *Server {
+	s := New(handler, logger)
+	s.h2.NewWriteScheduler = nil // Use the HTTP/2 engine's current default.
+	return s
+}
+
 func (s *Server) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -86,15 +106,34 @@ func (s *Server) Start() error {
 		defer s.wg.Done()
 		defer func() {
 			if value := recover(); value != nil {
+				s.recordError(fmt.Errorf("web listener panic: %v", value))
 				s.logger.Error("web listener panic: ", value)
 				s.cancel()
 			}
 		}()
 		if err := s.http.Serve(s.listener); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+			s.recordError(err)
 			s.logger.Error("web listener: ", err)
 		}
 	}()
 	return nil
+}
+
+// Handler shares website validation and presentation with an HTTP/3 listener.
+func (s *Server) Handler() http.Handler { return s.http.Handler }
+
+func (s *Server) recordError(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed && s.runtimeErr == nil {
+		s.runtimeErr = err
+	}
+}
+
+func (s *Server) RuntimeError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runtimeErr
 }
 
 // Serve transfers ownership only on success. The callback runs once when the connection closes.
@@ -125,7 +164,8 @@ func (s *Server) Serve(conn net.Conn, state tls.ConnectionState, onClose func(er
 			defer c.Close()
 			defer func() {
 				if value := recover(); value != nil {
-					s.logger.Error("web HTTP/2 panic: ", value)
+					s.recordError(fmt.Errorf("web HTTP/2 panic: %v", value))
+					s.logger.Error("web HTTP/2 panic: ", value, "\n", string(debug.Stack()))
 				}
 			}()
 			s.h2.ServeConn(c, &http2.ServeConnOpts{Context: context.WithValue(s.ctx, stateKey{}, state), BaseConfig: s.http})

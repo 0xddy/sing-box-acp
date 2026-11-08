@@ -12,6 +12,7 @@ type NaiveInboundOptions struct {
 	Network               NetworkList `json:"network,omitempty"`
 	QUICCongestionControl string      `json:"quic_congestion_control,omitempty" enum:"bbr,cubic,reno"`
 	InboundTLSOptionsContainer
+	Web *WebOptions `json:"web,omitempty"`
 }
 
 type NaiveOutboundOptions struct {

@@ -195,7 +195,7 @@ func (c *http1Profile) writeParserError(status int) error {
 
 func (c *http1Profile) beginResponseBody(status int, h http.Header) error {
 	var err error
-	if status == http.StatusSwitchingProtocols {
+	if status == http.StatusSwitchingProtocols || (c.method == http.MethodConnect && status >= 200 && status < 300) {
 		c.phase = responseOpaque
 		if c.input != nil {
 			c.input.switchToOpaque() // Hijacked bytes are no longer HTTP requests.
