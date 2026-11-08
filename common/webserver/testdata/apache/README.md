@@ -77,3 +77,49 @@ go test -tags with_utls ./common/webserver -run '^$' -fuzz '^FuzzRequestProfileB
 
 边界：此测试不覆盖所有请求组合、TLS/OpenSSL 服务端指纹、HTTP/2 后续调度、
 压缩字节、TCP 行为或时序；不能用通过率推导“不可被识别”。
+
+## Naive 与 HTTP/3 参考环境
+
+Naive 共用网站处理，但使用 HTTP/2 引擎当前的调度器。旧优先级树在 2000 条流
+批量撤销时曾触发空帧 panic；切换调度器后 HTTPS、QUIC、混合流的 race 测试通过。
+Naive 的 `SETTINGS_NO_RFC7540_PRIORITIES=1` 保持真实广告值，没有为了外观隐藏。
+因此上文的 HTTP/2 SETTINGS 完全匹配结论仅适用于原网站配置，不适用于 Naive。
+AnyTLS 保留既有调度设置。HTTP/3 的底层参数还需要单独比较。
+
+`../apache-http3` 保存独立参考环境配方，固定 Apache 官方 mod_http3 合入提交
+`926afa978dcd084bd72b6a726130f69e363dca7e`、nghttp3 1.17.0 和基础镜像。
+源码归档已完成 SHA-256 与完整解包检查，具体地址见 `reference.lock.json`。
+2026-11-08 Docker 中 Debian HTTP、HTTPS 软件源均不可达，依赖安装失败；
+**参考镜像尚未成功构建，HTTP/3 对照尚未执行**。不能把此配方当作已验证环境。
+首次成功构建后须补齐 `/reference-packages.txt` 的全部依赖版本和镜像 ID，
+随后才能冻结可重复构建的完整环境。mod_http3 开发版仅用于隔离测试。
+
+在网络正常的 Linux 测试环境中下载源码并核验（归档忽略于 Git）：
+
+```sh
+cd common/webserver/testdata/apache-http3
+curl --fail --location --output naive-httpd.tar.gz https://codeload.github.com/apache/httpd/tar.gz/926afa978dcd084bd72b6a726130f69e363dca7e
+curl --fail --location --output naive-nghttp3.tar.gz https://codeload.github.com/ngtcp2/nghttp3/tar.gz/refs/tags/v1.17.0
+sha256sum -c sources.sha256
+docker build -t acp-apache-h3-reference .
+docker run -d --name acp-apache-h3-reference --network none acp-apache-h3-reference
+```
+
+在 sing-box-acp 根目录用 Linux Go 生成测试程序，然后将其放入参考容器。
+容器只启用回环网络，不映射端口，不挂载业务配置或证书。证书由 `start.sh`
+生成，有效期两天。以下步骤须在镜像已成功构建、Apache 启动无错误后运行：
+
+```sh
+go test -tags with_utls -c -o /tmp/naive-reference.test ./protocol/naive
+docker cp /tmp/naive-reference.test acp-apache-h3-reference:/tmp/naive-reference.test
+docker exec -e ACP_APACHE_HTTP3_REFERENCE_ADDR=127.0.0.1:4433 -e QLOGDIR=/tmp/naive-qlog acp-apache-h3-reference /tmp/naive-reference.test -test.run '^TestApacheHTTP3Reference$' -test.v
+docker cp acp-apache-h3-reference:/tmp/naive-qlog /tmp/naive-reference-qlog
+docker cp acp-apache-h3-reference:/reference-packages.txt /tmp/naive-reference-packages.txt
+docker image inspect acp-apache-h3-reference --format '{{.Id}}'
+docker rm -f acp-apache-h3-reference
+```
+
+对照程序比较 GET、HEAD、POST、OPTIONS、错误认证 CONNECT、TRACE 和未知方法
+的状态、正文、Server、Content-Type、Allow 方法集合，确认没有代理认证挑战或
+用户计费。输出 HTTP/3 SETTINGS；qlog 保留双方 QUIC 传输参数、设置与关闭事件，
+供差异报告分析。尚未通过实际运行校准的参数不得宣称与 Apache 一致。

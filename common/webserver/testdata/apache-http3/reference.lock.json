@@ -1,0 +1,17 @@
+{
+  "status": "build_not_verified",
+  "base_image": "httpd@sha256:a30cd4cd57f3f3c3be9b2d16384d2488839996bb14c67df2b51f1ecbb3e584a1",
+  "httpd_commit": "926afa978dcd084bd72b6a726130f69e363dca7e",
+  "httpd_source": "https://codeload.github.com/apache/httpd/tar.gz/926afa978dcd084bd72b6a726130f69e363dca7e",
+  "nghttp3_version": "1.17.0",
+  "nghttp3_source": "https://codeload.github.com/ngtcp2/nghttp3/tar.gz/refs/tags/v1.17.0",
+  "source_checksum_file": "sources.sha256",
+  "source_archives_verified": true,
+  "openssl_debian_version": "3.5.7-1~deb13u3",
+  "apr_debian_version": "1.7.5-1",
+  "apr_util_debian_version": "1.6.3-3+deb13u1",
+  "complete_build_package_manifest": null,
+  "built_image_id": null,
+  "comparison_result": null,
+  "pending": "Debian repositories unreachable in the Docker environment. Build recipe and runtime configuration remain unverified; freeze all resolved package versions and the resulting image ID after the first successful build."
+}
