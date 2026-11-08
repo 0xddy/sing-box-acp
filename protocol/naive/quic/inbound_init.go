@@ -2,8 +2,11 @@ package quic
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/sagernet/quic-go"
@@ -65,12 +68,15 @@ func init() {
 				)
 			}
 		default:
+			udpConn.Close()
 			return nil, E.New("unknown quic congestion control: ", options.QUICCongestionControl)
 		}
 
 		quicListener, err := qtls.ListenEarly(udpConn, tlsConfig, &quic.Config{
-			MaxIncomingStreams: 1 << 60,
-			Allow0RTT:          true,
+			MaxIncomingStreams: naive.MaxConcurrentStreams,
+			MaxIdleTimeout:     2 * time.Minute,
+			KeepAlivePeriod:    15 * time.Second,
+			Allow0RTT:          false,
 			DisablePathManager: true,
 		})
 		if err != nil {
@@ -79,22 +85,62 @@ func init() {
 		}
 
 		h3Server := &http3.Server{
-			Handler: handler,
+			Handler:     handler,
+			IdleTimeout: 5 * time.Second,
 			ConnContext: func(ctx context.Context, conn *quic.Conn) context.Context {
+				if owner, ok := handler.(interface{ AcquireTransport() (func(), bool) }); ok {
+					release, admitted := owner.AcquireTransport()
+					if !admitted {
+						_ = conn.CloseWithError(0, "")
+					} else {
+						context.AfterFunc(conn.Context(), release)
+					}
+				}
 				conn.SetCongestionControl(congestionControl(conn))
 				return log.ContextWithNewID(ctx)
 			},
 		}
 
+		server := &ownedServer{server: h3Server, listener: quicListener, packet: udpConn, done: make(chan struct{})}
 		go func() {
+			defer close(server.done)
+			defer udpConn.Close()
+			defer quicListener.Close()
+			defer func() {
+				if value := recover(); value != nil {
+					if reporter, ok := handler.(interface{ ReportRuntimeError(error) }); ok {
+						reporter.ReportRuntimeError(fmt.Errorf("HTTP/3 panic: %v", value))
+					}
+				}
+			}()
 			sErr := h3Server.ServeListener(quicListener)
-			udpConn.Close()
 			if sErr != nil && !E.IsClosedOrCanceled(sErr) {
+				if reporter, ok := handler.(interface{ ReportRuntimeError(error) }); ok {
+					reporter.ReportRuntimeError(sErr)
+				}
 				logger.Error("http3 server closed: ", sErr)
 			}
 		}()
 
-		return quicListener, nil
+		return server, nil
 	}
 	naive.WrapError = qtls.WrapError
+}
+
+type ownedServer struct {
+	server   *http3.Server
+	listener io.Closer
+	packet   net.PacketConn
+	done     chan struct{}
+	once     sync.Once
+}
+
+func (s *ownedServer) Close() error {
+	s.once.Do(func() {
+		_ = s.server.Close()
+		_ = s.listener.Close()
+		_ = s.packet.Close()
+		<-s.done
+	})
+	return nil
 }

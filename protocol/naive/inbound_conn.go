@@ -232,6 +232,11 @@ func (c *naiveH2Conn) WriteBuffer(buffer *buf.Buffer) error {
 
 func wrapError(err error) error {
 	err = baderror.WrapH2(err)
+	// io.Reader requires the literal EOF value. Wrapping it makes io.Copy
+	// treat a clean upload half-close as a failure and close the target early.
+	if err == nil || err == io.EOF {
+		return err
+	}
 	if WrapError != nil {
 		err = WrapError(err)
 	}
