@@ -296,7 +296,13 @@ func (n *Inbound) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Once attached, the stream owns cancellation and write synchronization.
 	// The early callback only guards authentication-to-handoff I/O.
 	stopEarlyInterrupt()
-	metadata := adapter.InboundContext{Inbound: n.Tag(), InboundType: n.Type(), User: user, Source: source, Destination: destination, Network: N.NetworkTCP}
+	metadata := adapter.InboundContext{
+		Inbound: n.Tag(), InboundType: n.Type(), User: user,
+		InboundDetour: n.listener.ListenOptions().Detour,
+		Source:        source, Destination: destination,
+		OriginDestination: M.SocksaddrFromNet(conn.LocalAddr()).Unwrap(),
+		Network:           N.NetworkTCP,
+	}
 	n.router.RouteConnectionEx(flow.ctx, flow, metadata, func(error) { _ = flow.Close() })
 	<-flow.ctx.Done()
 }

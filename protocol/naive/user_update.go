@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/sagernet/sing/common/auth"
+	"github.com/sagernet/sing/common/bufio/deadline"
 )
 
 type userIdentity struct {
@@ -99,6 +100,15 @@ type userFlow struct {
 	mu     sync.Mutex
 	closed bool
 	once   sync.Once
+}
+
+// Forward the deadline requirement without exposing an upstream connection
+// that could bypass this flow's revocation and close synchronization.
+func (f *userFlow) NeedAdditionalReadDeadline() bool {
+	f.mu.Lock()
+	conn := f.Conn
+	f.mu.Unlock()
+	return deadline.NeedAdditionalReadDeadline(conn)
 }
 
 func (f *userFlow) attach(conn net.Conn) bool {
