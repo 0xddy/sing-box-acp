@@ -29,6 +29,7 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
+	uotprotocol "github.com/sagernet/sing/common/uot"
 	sHttp "github.com/sagernet/sing/protocol/http"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -261,7 +262,9 @@ func (n *Inbound) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		hostPort = r.Header.Get("-connect-authority")
 	}
 	destination := M.ParseSocksaddr(hostPort).Unwrap()
-	if destination.Port == 0 || !destination.IsValid() {
+	// UoT v2 uses a reserved authority with port zero. Ordinary CONNECT
+	// destinations must still carry a real port; authentication has already run.
+	if !destination.IsValid() || (destination.Port == 0 && destination.Fqdn != uotprotocol.MagicAddress) {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
