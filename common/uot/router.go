@@ -38,6 +38,9 @@ func (r *Router) RouteConnection(ctx context.Context, conn net.Conn, metadata ad
 		}
 		metadata.Domain = request.Destination.Fqdn
 		metadata.Destination = request.Destination
+		if !request.IsConnect {
+			return r.routeAssociation(ctx, uot.NewConn(conn, *request), metadata)
+		}
 		return r.router.RoutePacketConnection(ctx, uot.NewConn(conn, *request), metadata)
 	case uot.LegacyMagicAddress:
 		r.logger.DebugContext(ctx, "inbound legacy UoT connection")
@@ -69,6 +72,15 @@ func (r *Router) RouteConnectionEx(ctx context.Context, conn net.Conn, metadata 
 		}
 		metadata.Domain = request.Destination.Fqdn
 		metadata.Destination = request.Destination
+		if !request.IsConnect {
+			go func() {
+				err := r.routeAssociation(ctx, uot.NewConn(conn, *request), metadata)
+				if onClose != nil {
+					onClose(err)
+				}
+			}()
+			return
+		}
 		r.router.RoutePacketConnectionEx(ctx, uot.NewConn(conn, *request), metadata, onClose)
 		return
 	case uot.LegacyMagicAddress:
